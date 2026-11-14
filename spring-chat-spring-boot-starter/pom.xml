@@ -9,24 +9,20 @@
         <version>0.1.0-SNAPSHOT</version>
     </parent>
 
+    <!-- Only dependencies: the code is in spring-chat-spring-boot-autoconfigure. -->
     <artifactId>spring-chat-spring-boot-starter</artifactId>
     <name>spring-chat-spring-boot-starter</name>
-    <description>Auto-configured AI chat endpoints and a Thymeleaf fragment, for Spring MVC and WebFlux</description>
+    <description>Starter for an AI chat page and Thymeleaf fragment, on Spring MVC or WebFlux</description>
 
     <dependencies>
+        <dependency>
+            <groupId>io.github.hjosugi</groupId>
+            <artifactId>spring-chat-spring-boot-autoconfigure</artifactId>
+        </dependency>
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-thymeleaf</artifactId>
         </dependency>
-        <dependency>
-            <groupId>org.springframework.ai</groupId>
-            <artifactId>spring-ai-client-chat</artifactId>
-        </dependency>
-        <dependency>
-            <groupId>tools.jackson.core</groupId>
-            <artifactId>jackson-databind</artifactId>
-        </dependency>
-
         <!-- The chat UI, a web component. The locator serves it without the version in the URL. -->
         <dependency>
             <groupId>org.webjars.npm</groupId>
@@ -36,54 +32,5 @@
             <groupId>org.webjars</groupId>
             <artifactId>webjars-locator-lite</artifactId>
         </dependency>
-
-        <!-- The application chooses its web stack. -->
-        <dependency>
-            <groupId>org.springframework.boot</groupId>
-            <artifactId>spring-boot-starter-webmvc</artifactId>
-            <optional>true</optional>
-        </dependency>
-        <dependency>
-            <groupId>org.springframework.boot</groupId>
-            <artifactId>spring-boot-starter-websocket</artifactId>
-            <optional>true</optional>
-        </dependency>
-        <dependency>
-            <groupId>org.springframework.boot</groupId>
-            <artifactId>spring-boot-starter-webflux</artifactId>
-            <optional>true</optional>
-        </dependency>
-
-        <dependency>
-            <groupId>org.springframework.boot</groupId>
-            <artifactId>spring-boot-starter-test</artifactId>
-            <scope>test</scope>
-        </dependency>
-        <dependency>
-            <groupId>io.projectreactor</groupId>
-            <artifactId>reactor-test</artifactId>
-            <scope>test</scope>
-        </dependency>
     </dependencies>
-
-    <build>
-        <plugins>
-            <plugin>
-                <groupId>org.apache.maven.plugins</groupId>
-                <artifactId>maven-compiler-plugin</artifactId>
-                <configuration>
-                    <annotationProcessorPaths>
-                        <path>
-                            <groupId>org.springframework.boot</groupId>
-                            <artifactId>spring-boot-configuration-processor</artifactId>
-                        </path>
-                        <path>
-                            <groupId>org.springframework.boot</groupId>
-                            <artifactId>spring-boot-autoconfigure-processor</artifactId>
-                        </path>
-                    </annotationProcessorPaths>
-                </configuration>
-            </plugin>
-        </plugins>
-    </build>
 </project>

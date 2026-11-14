@@ -7,7 +7,9 @@ An AI chat for Spring Boot 4 and Thymeleaf. Add one dependency and a model, and 
 - **Spring MVC or WebFlux**: the same starter configures itself for either.
 - **No React and no build step**: the UI is the [Deep Chat](https://deepchat.dev) web component, served from a WebJar.
 
-Needs Java 21 and Spring Boot 4.1. Built with Spring AI 2.0.
+| spring-chat | Spring Boot | Spring AI | Java |
+| --- | --- | --- | --- |
+| 0.1 | 4.1 | 2.0 | 21 or later |
 
 ## Use it
 
@@ -29,7 +31,7 @@ Add the starter, a web stack and a model:
 </dependency>
 ```
 
-The starter is not on Maven Central yet: `mvn install` this repository first.
+The starter is not on Maven Central yet: `./mvnw install` this repository first.
 
 Start the application and open <http://localhost:8080/chat>.
 
@@ -51,7 +53,7 @@ One include can name its transport instead of using the property:
 <div style="height: 32rem" th:insert="~{spring-chat/chat :: chat-over('websocket')}"></div>
 ```
 
-On Spring MVC, WebSocket also needs `spring-boot-starter-websocket`; the application fails at startup with that message if it is missing. WebFlux needs nothing more.
+On Spring MVC, WebSocket also needs `spring-boot-starter-websocket`; without it the application fails at startup and says so. WebFlux needs nothing more.
 
 | | SSE | WebSocket |
 | --- | --- | --- |
@@ -82,19 +84,38 @@ The model is configured as Spring AI documents it, for example `spring.ai.anthro
 
 ## Change what answers
 
-Declare a `ChatService` to answer with something other than the default `ChatClient` call, for example with tools:
+The default answer is a call to Spring AI's `ChatClient` with the system prompt and the conversation memory, which is Spring AI's `ChatMemory` bean. A `ChatPromptCustomizer` adds tools, advisors or options to each call and keeps the rest:
 
 ```java
 @Bean
-ChatService chatService(ChatClient.Builder builder, OrderTools orderTools) {
-    ChatClient client = builder.defaultTools(orderTools).build();
+ChatPromptCustomizer orderTools(OrderTools orderTools) {
+    return (prompt, request) -> prompt.tools(orderTools);
+}
+```
+
+`request.principal()` is who sent the message, over either transport and either web stack: with Spring Security it is their `Authentication`, and `null` if they did not sign in. A tool that acts for the user can have it in its tool context:
+
+```java
+// The chat is behind a login, so there is always a principal.
+return (prompt, request) -> prompt.tools(orderTools)
+    .toolContext(Map.of("user", request.principal().getName()));
+```
+
+To answer with something else entirely, declare a `ChatService`. It replaces the default, system prompt and memory included:
+
+```java
+@Bean
+ChatService chatService(ChatClient.Builder builder) {
+    ChatClient client = builder.build();
     return (request) -> client.prompt().user(request.text()).stream().content();
 }
 ```
 
-The default service adds the system prompt and the conversation memory; a service of your own adds what it wants of them.
+Colors are CSS variables (`--spring-chat-primary` and the others at the top of `spring-chat.css`) and follow the system's light or dark scheme.
 
-Conversation memory is Spring AI's `ChatMemory` bean. Colors are CSS variables (`--spring-chat-primary` and the others at the top of `spring-chat.css`) and follow the system's light or dark scheme.
+## A UI of your own
+
+Depend on `spring-chat-spring-boot-autoconfigure` in place of the starter. The application then has the two endpoints and no page, Thymeleaf or Deep Chat: the events above are all a UI needs.
 
 ## With Spring Security
 
@@ -114,12 +135,13 @@ The endpoints are open: anyone who can reach them can spend the model's tokens. 
 - **A conversation lasts as long as the page.** The browser makes up the conversation id on load, so a reload starts a new conversation.
 - **Nothing removes old conversations.** Spring AI's default `ChatMemory` keeps them in memory until the application stops, and every page that sends a message adds one. For an application that runs long, add one of Spring AI's chat memory repository starters and clear it on your own schedule, or set `spring-chat.memory.enabled=false`.
 - **Errors show one fixed sentence.** The cause is in the server log only, because it can name the provider or a key.
+- **Native images** get the hints the chat needs, but no native build has been tried yet.
 
 ## Samples
 
 ```bash
-mvn install
-mvn -pl spring-chat-sample-webmvc spring-boot:run    # or spring-chat-sample-webflux
+./mvnw install
+./mvnw -pl spring-chat-sample-webmvc spring-boot:run    # or spring-chat-sample-webflux
 ```
 
 Open <http://localhost:8080>. The page has links for both transports and for the built-in page.
@@ -127,22 +149,25 @@ Open <http://localhost:8080>. The page has links for both transports and for the
 No API key is needed: without one, a demo model repeats the message. For Claude:
 
 ```bash
-CHAT_MODEL=anthropic ANTHROPIC_API_KEY=... mvn -pl spring-chat-sample-webmvc spring-boot:run
+CHAT_MODEL=anthropic ANTHROPIC_API_KEY=... ./mvnw -pl spring-chat-sample-webmvc spring-boot:run
 ```
 
 ## Layout
 
 ```
-spring-chat-spring-boot-starter/   the library
-  .../springchat/                  ChatService, the events, the properties
-  .../springchat/autoconfigure/    the two auto-configurations
-  .../springchat/web/              SSE and page controllers and the JSON, shared by MVC and WebFlux
-  .../springchat/web/servlet/      WebSocket on Spring MVC
-  .../springchat/web/reactive/     WebSocket on WebFlux
-  resources/templates/spring-chat/ the fragment and the built-in page
-  resources/static/spring-chat/    the script that connects Deep Chat, and the styles
-spring-chat-sample-webmvc/         the chat in a Spring MVC application
-spring-chat-sample-webflux/        the same in a WebFlux application
+spring-chat-spring-boot-autoconfigure/  the code
+  .../springchat/                       what applications use: ChatService, ChatPromptCustomizer, the properties
+  .../springchat/autoconfigure/         the auto-configuration
+  .../springchat/web/                   the events, SSE and the page, shared by MVC and WebFlux
+  .../springchat/web/servlet/           WebSocket on Spring MVC
+  .../springchat/web/reactive/          WebSocket on WebFlux
+  resources/templates/spring-chat/      the fragment and the built-in page
+  resources/static/spring-chat/         the script that connects Deep Chat, and the styles
+spring-chat-spring-boot-starter/        dependencies only: the code, Thymeleaf and Deep Chat
+spring-chat-sample-webmvc/              the chat in a Spring MVC application
+spring-chat-sample-webflux/             the same in a WebFlux application
 ```
 
-`mvn verify` runs the tests. The starter's start a server on each web stack and talk to it over real SSE and WebSocket connections; the samples' do the same through Spring AI, with the demo model.
+Applications use `io.github.hjosugi.springchat` only; the packages below it may change between versions.
+
+`./mvnw verify` runs the tests. The library's start a server on each web stack and talk to it over real SSE and WebSocket connections; the samples' do the same through Spring AI, with the demo model.
