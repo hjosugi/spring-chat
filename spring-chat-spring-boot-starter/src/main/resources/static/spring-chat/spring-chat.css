@@ -1,0 +1,62 @@
+/* Colors follow the system's light or dark scheme; override the variables to restyle. */
+:root {
+    color-scheme: light dark;
+    --spring-chat-background: #fbfdfb;
+    --spring-chat-foreground: #1c2a22;
+    --spring-chat-muted: #eef3ee;
+    --spring-chat-border: #dfe7df;
+    --spring-chat-primary: #2e8540;
+    --spring-chat-primary-foreground: #ffffff;
+    --spring-chat-error: #b3261e;
+    --spring-chat-font: ui-sans-serif, system-ui, "Hiragino Sans", "Noto Sans JP", sans-serif;
+}
+
+@media (prefers-color-scheme: dark) {
+    :root {
+        --spring-chat-background: #141a16;
+        --spring-chat-foreground: #eaf1ea;
+        --spring-chat-muted: #26302a;
+        --spring-chat-border: #36423a;
+        --spring-chat-primary: #6cc47c;
+        --spring-chat-primary-foreground: #0e1410;
+        --spring-chat-error: #f2b8b5;
+    }
+}
+
+deep-chat.spring-chat {
+    display: block;
+    width: 100%;
+    height: 100%;
+    min-height: 16rem;
+}
+
+/* The built-in page: a header and the chat filling the rest. */
+.spring-chat-page {
+    margin: 0;
+    height: 100dvh;
+    display: flex;
+    flex-direction: column;
+    background: var(--spring-chat-background);
+    color: var(--spring-chat-foreground);
+    font-family: var(--spring-chat-font);
+}
+
+.spring-chat-header {
+    padding: 0.75rem 1rem;
+    border-bottom: 1px solid var(--spring-chat-border);
+}
+
+.spring-chat-header h1 {
+    margin: 0 auto;
+    max-width: 48rem;
+    font-size: 1rem;
+    font-weight: 600;
+}
+
+.spring-chat-main {
+    flex: 1;
+    min-height: 0;
+    width: 100%;
+    max-width: 48rem;
+    margin: 0 auto;
+}

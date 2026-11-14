@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org">
+<body>
+<!--/*
+  The chat. Include it where it should appear; it fills its container:
+
+    <div style="height: 32rem" th:insert="~{spring-chat/chat :: chat}"></div>
+
+  The transport is spring-chat.transport unless the include names one:
+
+    th:insert="~{spring-chat/chat :: chat(transport='websocket')}"
+*/-->
+<th:block th:fragment="chat">
+    <link rel="stylesheet" th:href="@{/spring-chat/spring-chat.css}">
+    <deep-chat class="spring-chat"
+               th:data-transport="${transport ?: springChat.transport}"
+               th:data-stream-url="@{${springChat.streamPath}}"
+               th:data-socket-url="@{${springChat.socketPath}}"
+               th:data-intro="${springChat.intro}"
+               th:data-placeholder="${springChat.placeholder}"
+               th:data-csrf-header="${_csrf?.headerName}"
+               th:data-csrf-token="${_csrf?.token}"></deep-chat>
+    <script type="module" th:src="@{/webjars/deep-chat/dist/deepChat.bundle.js}"></script>
+    <script type="module" th:src="@{/spring-chat/spring-chat.js}"></script>
+</th:block>
+</body>
+</html>

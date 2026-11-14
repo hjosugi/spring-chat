@@ -1,0 +1,23 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org" lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>spring-chat sample</title>
+    <style>
+        body { margin: 0 auto; max-width: 48rem; padding: 1rem; font-family: system-ui, sans-serif; }
+        nav { display: flex; gap: 1rem; margin-bottom: 1rem; }
+        .chat { height: 32rem; border: 1px solid #8884; border-radius: 0.75rem; overflow: hidden; }
+    </style>
+</head>
+<body>
+<h1>spring-chat sample</h1>
+<nav>
+    <a th:href="@{/(transport='sse')}">SSE</a>
+    <a th:href="@{/(transport='websocket')}">WebSocket</a>
+    <a th:href="@{/chat}">Built-in page</a>
+</nav>
+<p>Transport: <strong th:text="${transport}">sse</strong></p>
+<div class="chat" th:insert="~{spring-chat/chat :: chat(transport=${transport})}"></div>
+</body>
+</html>

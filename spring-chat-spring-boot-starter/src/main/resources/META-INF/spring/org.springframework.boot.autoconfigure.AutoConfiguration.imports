@@ -1,0 +1,2 @@
+io.github.hjosugi.springchat.autoconfigure.SpringChatAutoConfiguration
+io.github.hjosugi.springchat.autoconfigure.SpringChatWebAutoConfiguration
