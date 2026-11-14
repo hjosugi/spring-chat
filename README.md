@@ -135,7 +135,7 @@ The endpoints are open: anyone who can reach them can spend the model's tokens. 
 - **A conversation lasts as long as the page.** The browser makes up the conversation id on load, so a reload starts a new conversation.
 - **Nothing removes old conversations.** Spring AI's default `ChatMemory` keeps them in memory until the application stops, and every page that sends a message adds one. For an application that runs long, add one of Spring AI's chat memory repository starters and clear it on your own schedule, or set `spring-chat.memory.enabled=false`.
 - **Errors show one fixed sentence.** The cause is in the server log only, because it can name the provider or a key.
-- **With Spring AI's Anthropic model, a stopped reply goes on at Anthropic.** The chat cancels the reply and the browser sees it stop, but Spring AI 2.0.2 (and 2.1.0-RC2) fails to close its connection while it reads from it; the log shows `Unbalanced enter/exit`. The model writes the rest of the reply, and it is billed. Other models have not been tried.
+- **With Spring AI's Anthropic model, a stopped reply goes on at Anthropic.** The chat cancels the reply and the browser sees it stop, but Spring AI 2.0.2 (and 2.1.0-RC2) fails to close its connection while it reads from it; the log shows `Unbalanced enter/exit`. The model writes the rest of the reply, and it is billed. An application can close that connection itself, through a hook Spring AI provides: [spring-chat-sample](https://github.com/hjosugi/spring-chat-sample#a-stopped-reply-ends-at-anthropic-too) does, in one class and one bean. Other models have not been tried.
 - **Native images** get the hints the chat needs, but no native build has been tried yet.
 
 ## Samples
