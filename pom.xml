@@ -19,6 +19,13 @@
     <description>An AI chat for Spring Boot and Thymeleaf, over SSE or WebSocket</description>
     <url>https://github.com/hjosugi/spring-chat</url>
 
+    <licenses>
+        <license>
+            <name>Apache License, Version 2.0</name>
+            <url>https://www.apache.org/licenses/LICENSE-2.0</url>
+        </license>
+    </licenses>
+
     <scm child.scm.connection.inherit.append.path="false" child.scm.developerConnection.inherit.append.path="false"
          child.scm.url.inherit.append.path="false">
         <url>https://github.com/hjosugi/spring-chat</url>

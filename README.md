@@ -172,3 +172,7 @@ spring-chat-sample-webflux/             the same in a WebFlux application
 Applications use `io.github.hjosugi.springchat` only; the packages below it may change between versions.
 
 `./mvnw verify` runs the tests. The library's start a server on each web stack and talk to it over real SSE and WebSocket connections; the samples' do the same through Spring AI, with the demo model.
+
+## License
+
+[Apache License 2.0](LICENSE)
