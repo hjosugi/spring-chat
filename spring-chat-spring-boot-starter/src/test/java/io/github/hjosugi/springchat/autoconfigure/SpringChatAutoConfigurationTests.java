@@ -6,7 +6,7 @@ import io.github.hjosugi.springchat.ChatService;
 import io.github.hjosugi.springchat.ChatTransport;
 import io.github.hjosugi.springchat.web.ChatPageController;
 import io.github.hjosugi.springchat.web.ChatStreamController;
-import io.github.hjosugi.springchat.web.ChatViewAdvice;
+import io.github.hjosugi.springchat.web.ChatView;
 import org.junit.jupiter.api.Test;
 import reactor.core.publisher.Flux;
 
@@ -52,7 +52,7 @@ class SpringChatAutoConfigurationTests {
 		this.servlet.withUserConfiguration(ChatServiceConfiguration.class)
 			.run((context) -> assertThat(context).hasSingleBean(ChatStreamController.class)
 				.hasSingleBean(ChatPageController.class)
-				.hasSingleBean(ChatViewAdvice.class)
+				.hasBean("springChat")
 				.hasSingleBean(io.github.hjosugi.springchat.web.servlet.ChatWebSocketHandler.class)
 				.doesNotHaveBean(io.github.hjosugi.springchat.web.reactive.ChatWebSocketHandler.class));
 	}
@@ -84,8 +84,20 @@ class SpringChatAutoConfigurationTests {
 				assertThat(properties.transport()).isEqualTo(ChatTransport.WEBSOCKET);
 				assertThat(properties.streamPath()).isEqualTo("/assistant/stream");
 				assertThat(properties.socketPath()).isEqualTo("/assistant/ws");
+				assertThat(context.getBean("springChat", ChatView.class))
+					.isEqualTo(new ChatView("Chat", "websocket", "/assistant/stream", "/assistant/ws", null, "Message"));
 				assertThat(context).doesNotHaveBean(ChatPageController.class);
 			});
+	}
+
+	@Test
+	void aPathThatWouldNotMapFailsTheStart() {
+		this.servlet.withUserConfiguration(ChatServiceConfiguration.class)
+			.withPropertyValues("spring-chat.path=chat/")
+			.run((context) -> assertThat(context).hasFailed()
+				.getFailure()
+				.rootCause()
+				.hasMessageContaining("spring-chat.path"));
 	}
 
 	@Test

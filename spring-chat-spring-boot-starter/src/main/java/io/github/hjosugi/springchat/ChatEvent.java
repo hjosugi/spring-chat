@@ -1,21 +1,21 @@
 package io.github.hjosugi.springchat;
 
-import com.fasterxml.jackson.annotation.JsonInclude;
-
 /**
- * What the server sends during a reply, over SSE and WebSocket alike:
- * {@code start}, any number of {@code text}, then {@code done} or {@code error}.
+ * What the server sends during a reply, over SSE and WebSocket alike: {@code start},
+ * then {@code text} as the reply arrives and {@code ping} while it is quiet, then
+ * {@code done} or {@code error}.
  *
- * @param type one of the {@code TYPE} constants
+ * @param type one of the constants
  * @param delta the next piece of the reply, for {@code text}
  * @param message what went wrong, for {@code error}
  */
-@JsonInclude(JsonInclude.Include.NON_NULL)
 public record ChatEvent(String type, String delta, String message) {
 
 	public static final String START = "start";
 
 	public static final String TEXT = "text";
+
+	public static final String PING = "ping";
 
 	public static final String DONE = "done";
 
@@ -29,12 +29,23 @@ public record ChatEvent(String type, String delta, String message) {
 		return new ChatEvent(TEXT, delta, null);
 	}
 
+	public static ChatEvent ping() {
+		return new ChatEvent(PING, null, null);
+	}
+
 	public static ChatEvent done() {
 		return new ChatEvent(DONE, null, null);
 	}
 
 	public static ChatEvent error(String message) {
 		return new ChatEvent(ERROR, null, message);
+	}
+
+	/**
+	 * Whether this event ends its reply.
+	 */
+	public boolean endsReply() {
+		return DONE.equals(this.type) || ERROR.equals(this.type);
 	}
 
 }

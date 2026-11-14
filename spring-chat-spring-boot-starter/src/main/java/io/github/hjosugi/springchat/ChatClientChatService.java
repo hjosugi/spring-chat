@@ -10,6 +10,12 @@ import org.springframework.ai.chat.memory.ChatMemory;
  */
 public class ChatClientChatService implements ChatService {
 
+	/**
+	 * The browser chooses its conversation id. The prefix keeps it from naming a
+	 * conversation that the application keeps in the same {@link ChatMemory}.
+	 */
+	static final String CONVERSATION_PREFIX = "spring-chat:";
+
 	private final ChatClient chatClient;
 
 	public ChatClientChatService(ChatClient chatClient) {
@@ -18,9 +24,10 @@ public class ChatClientChatService implements ChatService {
 
 	@Override
 	public Flux<String> stream(ChatRequest request) {
+		String conversationId = CONVERSATION_PREFIX + request.conversationId();
 		return this.chatClient.prompt()
 			.user(request.text())
-			.advisors((advisors) -> advisors.param(ChatMemory.CONVERSATION_ID, request.conversationId()))
+			.advisors((advisors) -> advisors.param(ChatMemory.CONVERSATION_ID, conversationId))
 			.stream()
 			.content();
 	}

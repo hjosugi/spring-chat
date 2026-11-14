@@ -1,38 +1,58 @@
 // Connects each <deep-chat class="spring-chat"> to the server, over SSE or WebSocket.
-// Both carry the same events: start, text (with a delta), then done or error.
+// Both carry the same events: start, then text (with a delta) and ping, then done or error.
 
 const INTERRUPTED = 'The connection was lost before the reply finished.';
 const UNREACHABLE = 'The chat server could not be reached.';
+const refused = (status) => `The chat server refused the message (HTTP ${status}).`;
+
+// Spring Security's CSRF token: from the fragment when the template had it,
+// else from the meta tags that Spring Security's reference has pages carry.
+function csrfHeader(data) {
+  const meta = (name) => document.querySelector(`meta[name="${name}"]`)?.content;
+  const header = data.csrfHeader ?? meta('_csrf_header');
+  const token = data.csrfToken ?? meta('_csrf');
+  return header && token ? { [header]: token } : {};
+}
 
 // SSE: one POST per message; the response body is the event stream.
 function sseTransport(data) {
+  async function receive(message, reply, signal) {
+    let response;
+    try {
+      response = await fetch(data.streamUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Accept: 'text/event-stream', ...csrfHeader(data) },
+        body: JSON.stringify(message),
+        signal,
+      });
+    } catch {
+      return reply.fail(UNREACHABLE);
+    }
+    if (!response.ok) return reply.fail(refused(response.status));
+
+    try {
+      const reader = response.body.pipeThrough(new TextDecoderStream()).getReader();
+      let buffer = '';
+      for (;;) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buffer += value;
+        const blocks = buffer.split(/\r?\n\r?\n/);
+        buffer = blocks.pop();
+        for (const block of blocks) {
+          const lines = block.split(/\r?\n/).filter((line) => line.startsWith('data:'));
+          if (lines.length) reply.event(JSON.parse(lines.map((line) => line.slice(5).trimStart()).join('\n')));
+        }
+      }
+    } catch {
+      // The stream broke; so did one that ended without done or error.
+    }
+    reply.fail(INTERRUPTED);
+  }
+
   return (message, reply) => {
     const abort = new AbortController();
-    const headers = { 'Content-Type': 'application/json', Accept: 'text/event-stream' };
-    if (data.csrfHeader) headers[data.csrfHeader] = data.csrfToken;
-
-    fetch(data.streamUrl, { method: 'POST', headers, body: JSON.stringify(message), signal: abort.signal })
-      .then(async (response) => {
-        if (!response.ok) throw new Error(`HTTP ${response.status}`);
-        const reader = response.body.pipeThrough(new TextDecoderStream()).getReader();
-        let buffer = '';
-        for (;;) {
-          const { value, done } = await reader.read();
-          if (done) break;
-          buffer += value;
-          const blocks = buffer.split(/\r?\n\r?\n/);
-          buffer = blocks.pop();
-          for (const block of blocks) {
-            const lines = block.split(/\r?\n/).filter((line) => line.startsWith('data:'));
-            if (lines.length) reply.event(JSON.parse(lines.map((line) => line.slice(5).trimStart()).join('\n')));
-          }
-        }
-        reply.fail(INTERRUPTED);
-      })
-      .catch(() => {
-        if (!abort.signal.aborted) reply.fail(UNREACHABLE);
-      });
-
+    receive(message, reply, abort.signal);
     return () => abort.abort();
   };
 }
@@ -41,12 +61,13 @@ function sseTransport(data) {
 function socketTransport(data) {
   const url = new URL(data.socketUrl, location.href);
   url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
-  let socket = null;
-  let current = null;
+  let socket = null; // the open connection
+  let connecting = null; // or the promise of one
+  let current = null; // the reply that the connection feeds
 
   function connect() {
-    return new Promise((resolve, reject) => {
-      if (socket?.readyState === WebSocket.OPEN) return resolve(socket);
+    if (socket) return Promise.resolve(socket);
+    connecting ??= new Promise((resolve, reject) => {
       const opening = new WebSocket(url);
       opening.onopen = () => {
         socket = opening;
@@ -54,30 +75,42 @@ function socketTransport(data) {
       };
       opening.onmessage = (frame) => current?.event(JSON.parse(frame.data));
       opening.onclose = () => {
-        // Closed before it opened: the promise rejects and the caller reports it.
-        if (socket !== opening) return reject(new Error('closed'));
+        if (socket !== opening) return reject(new Error('never opened'));
         socket = null;
         current?.fail(INTERRUPTED);
       };
+    }).finally(() => {
+      connecting = null;
     });
+    return connecting;
   }
 
   return (message, reply) => {
     current = reply;
+    let stopped = false;
     connect()
-      .then((open) => open.send(JSON.stringify({ type: 'message', ...message })))
+      .then((open) => {
+        if (!stopped) open.send(JSON.stringify({ type: 'message', ...message }));
+      })
       .catch(() => reply.fail(UNREACHABLE));
 
     return () => {
-      if (socket?.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ type: 'stop' }));
+      stopped = true;
+      socket?.send(JSON.stringify({ type: 'stop' }));
     };
   };
 }
 
+// A conversation lasts as long as the page: a reload starts a new one.
+function newConversationId() {
+  // randomUUID exists on HTTPS and localhost only.
+  if (crypto.randomUUID) return crypto.randomUUID();
+  return Array.from(crypto.getRandomValues(new Uint8Array(16)), (byte) => byte.toString(16).padStart(2, '0')).join('');
+}
+
 function configure(chat) {
   const data = chat.dataset;
-  // A conversation lasts as long as the page: a reload starts a new one.
-  const conversationId = crypto.randomUUID();
+  const conversationId = newConversationId();
   const transport = data.transport === 'websocket' ? socketTransport(data) : sseTransport(data);
 
   chat.connect = {
@@ -85,35 +118,44 @@ function configure(chat) {
     handler: (body, signals) => {
       let started = false;
       let open = true;
+      // deep-chat renders a text asynchronously, so what follows one waits for it:
+      // otherwise the end of a reply could overtake its last words.
+      let rendered = Promise.resolve();
+      const afterRendering = (action) => {
+        rendered = rendered.then(action).catch(() => {});
+      };
       const reply = {
         event(event) {
           if (!open) return;
-          // Until its own start arrives, what comes in belongs to a reply that was stopped.
+          // Every reply begins with start: what comes before it belongs to a reply that was stopped.
           if (event.type === 'start') started = true;
-          else if (event.type === 'error') reply.fail(event.message);
           else if (!started) return;
-          else if (event.type === 'text') signals.onResponse({ text: event.delta });
+          else if (event.type === 'text') afterRendering(() => signals.onResponse({ text: event.delta }));
           else if (event.type === 'done') reply.close();
+          else if (event.type === 'error') reply.fail(event.message);
         },
         fail(message) {
           if (!open) return;
           open = false;
-          // Not signals.onResponse({ error }): deep-chat throws on it when no text has arrived yet.
-          signals.onClose();
-          chat.addMessage({ error: message });
+          afterRendering(() => {
+            // Not signals.onResponse({ error }): deep-chat throws on it when no text has arrived yet.
+            signals.onClose();
+            chat.addMessage({ error: message });
+          });
         },
         close() {
           if (!open) return;
           open = false;
-          signals.onClose();
+          afterRendering(() => signals.onClose());
         },
       };
 
       signals.onOpen();
       const stop = transport({ conversationId, text: body.messages.at(-1).text }, reply);
       signals.stopClicked.listener = () => {
-        stop();
+        // Closed first, so that what stopping sets off cannot be taken for a failure.
         reply.close();
+        stop();
       };
     },
   };

@@ -1,0 +1,11 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org" lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Embedded</title>
+</head>
+<body>
+<div id="by-property" th:insert="~{spring-chat/chat :: chat}"></div>
+<div id="by-include" th:insert="~{spring-chat/chat :: chat-over('websocket')}"></div>
+</body>
+</html>

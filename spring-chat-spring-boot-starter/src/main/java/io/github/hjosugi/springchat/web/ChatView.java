@@ -3,7 +3,8 @@ package io.github.hjosugi.springchat.web;
 import io.github.hjosugi.springchat.ChatProperties;
 
 /**
- * What the {@code spring-chat/chat} fragment renders from, in every model as {@code springChat}.
+ * What the chat's templates render from. It is the bean {@code springChat}, so a
+ * template reads it as {@code ${@springChat.title}} whatever its model holds.
  *
  * @param title heading of the built-in page
  * @param transport {@code sse} or {@code websocket}

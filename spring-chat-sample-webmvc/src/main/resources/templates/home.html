@@ -18,6 +18,6 @@
     <a th:href="@{/chat}">Built-in page</a>
 </nav>
 <p>Transport: <strong th:text="${transport}">sse</strong></p>
-<div class="chat" th:insert="~{spring-chat/chat :: chat(transport=${transport})}"></div>
+<div class="chat" th:insert="~{spring-chat/chat :: chat-over(${transport})}"></div>
 </body>
 </html>

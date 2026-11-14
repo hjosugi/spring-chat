@@ -2,7 +2,8 @@ package io.github.hjosugi.springchat.web.reactive;
 
 import io.github.hjosugi.springchat.ChatEvent;
 import io.github.hjosugi.springchat.ChatEvents;
-import io.github.hjosugi.springchat.web.ChatSocketMessage;
+import io.github.hjosugi.springchat.web.BrowserMessage;
+import io.github.hjosugi.springchat.web.ChatJson;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
@@ -25,15 +26,15 @@ public class ChatWebSocketHandler implements WebSocketHandler {
 	@Override
 	public Mono<Void> handle(WebSocketSession session) {
 		Flux<WebSocketMessage> replies = session.receive()
-			.map(WebSocketMessage::getPayloadAsText)
-			.map(ChatSocketMessage::parse)
+			// A pong, say, is not a message and must not end the running reply.
+			.filter((frame) -> frame.getType() == WebSocketMessage.Type.TEXT)
+			.map((frame) -> ChatJson.read(frame.getPayloadAsText()))
 			.switchMap(this::reply)
-			.map(ChatSocketMessage::write)
-			.map(session::textMessage);
+			.map((event) -> session.textMessage(ChatJson.write(event)));
 		return session.send(replies);
 	}
 
-	private Flux<ChatEvent> reply(ChatSocketMessage message) {
+	private Flux<ChatEvent> reply(BrowserMessage message) {
 		return message.isStop() ? Flux.empty() : this.events.stream(message.toRequest());
 	}
 

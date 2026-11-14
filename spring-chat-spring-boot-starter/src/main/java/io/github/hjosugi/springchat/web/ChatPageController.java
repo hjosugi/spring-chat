@@ -4,12 +4,12 @@ import org.springframework.stereotype.Controller;
 import org.springframework.web.bind.annotation.GetMapping;
 
 /**
- * Serves the built-in chat page.
+ * Serves the built-in chat page, at {@code spring-chat.path}.
  */
 @Controller
 public class ChatPageController {
 
-	@GetMapping("${spring-chat.path:/chat}")
+	@GetMapping
 	public String chat() {
 		return "spring-chat/index";
 	}

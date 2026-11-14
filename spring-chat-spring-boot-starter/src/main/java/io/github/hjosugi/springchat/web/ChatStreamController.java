@@ -1,19 +1,20 @@
 package io.github.hjosugi.springchat.web;
 
-import io.github.hjosugi.springchat.ChatEvent;
 import io.github.hjosugi.springchat.ChatEvents;
-import io.github.hjosugi.springchat.ChatRequest;
 import reactor.core.publisher.Flux;
 
+import org.springframework.http.CacheControl;
 import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
 import org.springframework.http.codec.ServerSentEvent;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RestController;
 
 /**
- * The SSE transport: a POST with the message, answered by the reply's events.
- * Spring MVC and WebFlux both stream a {@link Flux} of {@link ServerSentEvent}s.
+ * The SSE transport, below {@code spring-chat.path}: a POST with the message,
+ * answered by the reply's events. Spring MVC and WebFlux both stream a {@link Flux}
+ * of {@link ServerSentEvent}s.
  */
 @RestController
 public class ChatStreamController {
@@ -24,10 +25,16 @@ public class ChatStreamController {
 		this.events = events;
 	}
 
-	@PostMapping(path = "${spring-chat.path:/chat}/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
-	public Flux<ServerSentEvent<ChatEvent>> stream(@RequestBody ChatRequest request) {
-		return this.events.stream(request)
-			.map((event) -> ServerSentEvent.builder(event).event(event.type()).build());
+	@PostMapping(path = "/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
+	public ResponseEntity<Flux<ServerSentEvent<String>>> stream(@RequestBody String message) {
+		Flux<ServerSentEvent<String>> events = this.events.stream(ChatJson.read(message).toRequest())
+			.map((event) -> ServerSentEvent.builder(ChatJson.write(event)).event(event.type()).build());
+		// A proxy must pass each event on as it comes: nginx buffers a response unless
+		// told not to, and one that compresses holds text back.
+		return ResponseEntity.ok()
+			.cacheControl(CacheControl.noCache().noTransform())
+			.header("X-Accel-Buffering", "no")
+			.body(events);
 	}
 
 }

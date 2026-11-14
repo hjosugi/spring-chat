@@ -54,7 +54,7 @@ class SampleApplicationTests {
 		HttpResponse<String> response = post("/chat/stream", """
 				{"conversationId": "sse-3", "text": " "}""");
 
-		assertThat(response.body()).contains("event:error").doesNotContain("event:start");
+		assertThat(response.body()).contains("event:error").doesNotContain("event:text");
 	}
 
 	@Test
