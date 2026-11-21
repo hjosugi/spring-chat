@@ -33,6 +33,14 @@
         <developerConnection>scm:git:git@github.com:hjosugi/spring-chat.git</developerConnection>
     </scm>
 
+    <developers>
+        <developer>
+            <id>hjosugi</id>
+            <name>hjosugi</name>
+            <url>https://github.com/hjosugi</url>
+        </developer>
+    </developers>
+
     <issueManagement>
         <system>GitHub</system>
         <url>https://github.com/hjosugi/spring-chat/issues</url>
@@ -79,6 +87,78 @@
     </dependencyManagement>
 
     <profiles>
+        <!--
+          What Maven Central asks of a release: a jar of the sources and one of the Javadoc,
+          a signature for every file, and an upload to the Central Portal. The upload is left
+          for the person who publishes to confirm in the portal. Run it on a tagged release:
+
+              ./mvnw -Prelease deploy
+
+          It needs a server "central" in settings.xml, with the user token of the Central
+          Portal, and a GPG key. See RELEASING.md.
+        -->
+        <profile>
+            <id>release</id>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-source-plugin</artifactId>
+                        <version>3.3.1</version>
+                        <executions>
+                            <execution>
+                                <id>attach-sources</id>
+                                <goals>
+                                    <goal>jar-no-fork</goal>
+                                </goals>
+                            </execution>
+                        </executions>
+                    </plugin>
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-javadoc-plugin</artifactId>
+                        <version>3.12.0</version>
+                        <configuration>
+                            <doclint>all,-missing</doclint>
+                        </configuration>
+                        <executions>
+                            <execution>
+                                <id>attach-javadocs</id>
+                                <goals>
+                                    <goal>jar</goal>
+                                </goals>
+                            </execution>
+                        </executions>
+                    </plugin>
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-gpg-plugin</artifactId>
+                        <version>3.2.8</version>
+                        <executions>
+                            <execution>
+                                <id>sign-artifacts</id>
+                                <phase>verify</phase>
+                                <goals>
+                                    <goal>sign</goal>
+                                </goals>
+                            </execution>
+                        </executions>
+                    </plugin>
+                    <plugin>
+                        <groupId>org.sonatype.central</groupId>
+                        <artifactId>central-publishing-maven-plugin</artifactId>
+                        <version>0.12.0</version>
+                        <extensions>true</extensions>
+                        <configuration>
+                            <publishingServerId>central</publishingServerId>
+                            <!-- The upload waits in the portal until it is published there. -->
+                            <autoPublish>false</autoPublish>
+                        </configuration>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
+
         <!--
           The tests on virtual threads: the web server's, and Reactor's boundedElastic, which
           the chat uses for what blocks. jdk.tracePinnedThreads prints a stack trace when a

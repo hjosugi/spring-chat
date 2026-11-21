@@ -33,4 +33,43 @@
             <artifactId>webjars-locator-lite</artifactId>
         </dependency>
     </dependencies>
+
+    <profiles>
+        <!--
+          Maven Central wants a jar of sources and one of Javadoc for every jar, and this one
+          has no code: they are empty.
+        -->
+        <profile>
+            <id>release</id>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-source-plugin</artifactId>
+                        <configuration>
+                            <forceCreation>true</forceCreation>
+                        </configuration>
+                    </plugin>
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-jar-plugin</artifactId>
+                        <executions>
+                            <execution>
+                                <id>empty-javadoc-jar</id>
+                                <phase>package</phase>
+                                <goals>
+                                    <goal>jar</goal>
+                                </goals>
+                                <configuration>
+                                    <classifier>javadoc</classifier>
+                                    <forceCreation>true</forceCreation>
+                                    <skipIfEmpty>false</skipIfEmpty>
+                                </configuration>
+                            </execution>
+                        </executions>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
+    </profiles>
 </project>
