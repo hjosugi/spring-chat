@@ -6,7 +6,7 @@
     <parent>
         <groupId>io.github.hjosugi</groupId>
         <artifactId>spring-chat-parent</artifactId>
-        <version>0.1.0-SNAPSHOT</version>
+        <version>0.1.0</version>
     </parent>
 
     <artifactId>spring-chat-spring-boot-autoconfigure</artifactId>

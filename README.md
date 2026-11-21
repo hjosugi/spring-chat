@@ -19,7 +19,7 @@ Add the starter, a web stack and a model:
 <dependency>
     <groupId>io.github.hjosugi</groupId>
     <artifactId>spring-chat-spring-boot-starter</artifactId>
-    <version>0.1.0-SNAPSHOT</version>
+    <version>0.1.0</version>
 </dependency>
 <dependency>
     <groupId>org.springframework.boot</groupId>
@@ -31,7 +31,12 @@ Add the starter, a web stack and a model:
 </dependency>
 ```
 
-The starter is not on Maven Central yet: `./mvnw install` this repository first.
+The starter is not on Maven Central yet. Install the release first:
+
+```bash
+git clone --branch v0.1.0 --depth 1 https://github.com/hjosugi/spring-chat
+(cd spring-chat && ./mvnw install -DskipTests)
+```
 
 Start the application and open <http://localhost:8080/chat>.
 
