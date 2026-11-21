@@ -159,7 +159,8 @@ class ChatEventsTests {
 		StepVerifier.create(events.stream(HI, null))
 			.expectNext(ChatEvent.start(), ChatEvent.text("hi"), ChatEvent.done())
 			.verifyComplete();
-		assertThat(thread[0]).startsWith("boundedElastic-").isNotEqualTo(Thread.currentThread().getName());
+		// Reactor names its threads loomBoundedElastic- when they are virtual.
+		assertThat(thread[0]).matches("(loomB|b)oundedElastic-\\d+").isNotEqualTo(Thread.currentThread().getName());
 	}
 
 	@Test

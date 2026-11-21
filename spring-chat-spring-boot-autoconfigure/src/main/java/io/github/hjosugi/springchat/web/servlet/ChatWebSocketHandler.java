@@ -1,6 +1,7 @@
 package io.github.hjosugi.springchat.web.servlet;
 
 import java.io.IOException;
+import java.util.concurrent.locks.ReentrantLock;
 
 import io.github.hjosugi.springchat.web.BrowserMessage;
 import io.github.hjosugi.springchat.web.ChatEvent;
@@ -25,6 +26,13 @@ public class ChatWebSocketHandler extends TextWebSocketHandler {
 	 */
 	private static final String REPLY = ChatWebSocketHandler.class.getName() + ".reply";
 
+	/**
+	 * The session attribute that holds the lock of its sends. A lock and not
+	 * {@code synchronized}: a send blocks on the network, and on Java 21 a virtual thread
+	 * that blocks inside {@code synchronized} keeps its carrier thread.
+	 */
+	private static final String SEND = ChatWebSocketHandler.class.getName() + ".send";
+
 	private final ChatEvents events;
 
 	private final int maxFrameLength;
@@ -42,6 +50,7 @@ public class ChatWebSocketHandler extends TextWebSocketHandler {
 	public void afterConnectionEstablished(WebSocketSession session) {
 		// The server's own limit, 8192 on Tomcat, is less than the default longest message.
 		session.setTextMessageSizeLimit(this.maxFrameLength);
+		session.getAttributes().put(SEND, new ReentrantLock());
 	}
 
 	@Override
@@ -77,17 +86,20 @@ public class ChatWebSocketHandler extends TextWebSocketHandler {
 	private void send(WebSocketSession session, Sinks.Empty<Void> reply, ChatEvent event) {
 		// One send at a time, and none for a reply that is no longer the running one:
 		// its last events may still be on their way here when the next reply starts.
-		synchronized (session) {
+		ReentrantLock lock = (ReentrantLock) session.getAttributes().get(SEND);
+		lock.lock();
+		try {
 			if (session.getAttributes().get(REPLY) != reply || !session.isOpen()) {
 				return;
 			}
-			try {
-				session.sendMessage(new TextMessage(ChatJson.write(event)));
-			}
-			catch (IOException | IllegalStateException ex) {
-				// The browser has gone.
-				stopReply(session);
-			}
+			session.sendMessage(new TextMessage(ChatJson.write(event)));
+		}
+		catch (IOException | IllegalStateException ex) {
+			// The browser has gone.
+			stopReply(session);
+		}
+		finally {
+			lock.unlock();
 		}
 	}
 

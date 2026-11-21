@@ -152,7 +152,8 @@ class AnthropicModelTests {
 		assertThat(reply).contains("\"delta\":\"order A-1 of tool-1 has shipped\"", "event:done")
 			.doesNotContain("event:error");
 		// A tool may block, so it must not run on a thread of the web server.
-		assertThat(OrderTools.thread).startsWith("boundedElastic-");
+		// Reactor names its threads loomBoundedElastic- when they are virtual.
+		assertThat(OrderTools.thread).matches("(loomB|b)oundedElastic-\\d+");
 	}
 
 	/**

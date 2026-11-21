@@ -77,4 +77,18 @@
             </dependency>
         </dependencies>
     </dependencyManagement>
+
+    <profiles>
+        <!--
+          The tests on virtual threads: the web server's, and Reactor's boundedElastic, which
+          the chat uses for what blocks. jdk.tracePinnedThreads prints a stack trace when a
+          virtual thread blocks while it holds its carrier thread.
+        -->
+        <profile>
+            <id>virtual-threads</id>
+            <properties>
+                <argLine>-Dspring.threads.virtual.enabled=true -Dreactor.schedulers.defaultBoundedElasticOnVirtualThreads=true -Djdk.tracePinnedThreads=full</argLine>
+            </properties>
+        </profile>
+    </profiles>
 </project>
