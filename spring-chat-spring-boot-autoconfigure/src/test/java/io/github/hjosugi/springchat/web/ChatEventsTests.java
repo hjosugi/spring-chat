@@ -2,8 +2,11 @@ package io.github.hjosugi.springchat.web;
 
 import java.security.Principal;
 import java.time.Duration;
+import java.util.List;
 
+import io.github.hjosugi.springchat.ChatReply;
 import io.github.hjosugi.springchat.ChatRequest;
+import io.github.hjosugi.springchat.ToolDecision;
 import org.junit.jupiter.api.Test;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
@@ -71,6 +74,92 @@ class ChatEventsTests {
 				.expectNextMatches((event) -> ChatEvent.ERROR.equals(event.type()) && event.message() != null)
 				.verifyComplete();
 		}
+	}
+
+	@Test
+	void aReplyThatWaitsForADecisionEndsWithTheCallsAndNotWithDone() {
+		ChatEvents pausing = new ChatEvents(new io.github.hjosugi.springchat.ChatService() {
+
+			@Override
+			public Flux<String> stream(ChatRequest request) {
+				return Flux.empty();
+			}
+
+			@Override
+			public Flux<ChatReply> reply(ChatRequest request) {
+				return Flux.just(new ChatReply.Text("asking"), new ChatReply.Confirmation(
+						List.of(new ChatReply.PendingToolCall("call_1", "cancelOrder", "{}"))));
+			}
+
+		}, 100);
+
+		StepVerifier.create(pausing.stream(HI, null))
+			.expectNext(ChatEvent.start(), ChatEvent.text("asking"))
+			.expectNext(ChatEvent.confirm(List.of(new ChatEvent.Call("call_1", "cancelOrder", "{}"))))
+			.verifyComplete();
+	}
+
+	@Test
+	void aReplyThatEndedBeforeItsEndHasOnlyThatOneDone() {
+		ChatEvents events = new ChatEvents(new io.github.hjosugi.springchat.ChatService() {
+
+			@Override
+			public Flux<String> stream(ChatRequest request) {
+				return Flux.empty();
+			}
+
+			@Override
+			public Flux<ChatReply> reply(ChatRequest request) {
+				return Flux.just(new ChatReply.Text("long"), new ChatReply.Ended(ChatReply.Reason.FILTERED));
+			}
+
+		}, 100);
+
+		StepVerifier.create(events.stream(HI, null))
+			.expectNext(ChatEvent.start(), ChatEvent.text("long"), ChatEvent.done("filtered"))
+			.verifyComplete();
+	}
+
+	@Test
+	void decisionsMakeARequestWithoutText() {
+		ChatRequest[] received = new ChatRequest[1];
+		ChatEvents events = new ChatEvents((request) -> {
+			received[0] = request;
+			return Flux.empty();
+		}, 100);
+		BrowserMessage message = new BrowserMessage("message", "c1", null,
+				List.of(new BrowserMessage.Decision("call_1", true), new BrowserMessage.Decision("call_2", false)));
+
+		StepVerifier.create(events.stream(message, () -> "alice")).expectNext(ChatEvent.start(), ChatEvent.done()).verifyComplete();
+
+		assertThat(received[0].text()).isEmpty();
+		assertThat(received[0].decisions()).containsExactly(new ToolDecision("call_1", true),
+				new ToolDecision("call_2", false));
+	}
+
+	@Test
+	void aMessageWithBothATextAndDecisionsIsRejected() {
+		ChatEvents events = new ChatEvents((request) -> Flux.error(new AssertionError("asked")), 100);
+
+		StepVerifier.create(events.stream(new BrowserMessage("message", "c1", "hi",
+				List.of(new BrowserMessage.Decision("call_1", true))), null))
+			.expectNext(ChatEvent.start())
+			.expectNextMatches((event) -> ChatEvent.ERROR.equals(event.type()))
+			.verifyComplete();
+	}
+
+	@Test
+	void theServiceIsAskedOnAWorkerThreadAndNotOnTheCallers() {
+		String[] thread = new String[1];
+		ChatEvents events = new ChatEvents((request) -> Flux.defer(() -> {
+			thread[0] = Thread.currentThread().getName();
+			return Flux.just("hi");
+		}), 100);
+
+		StepVerifier.create(events.stream(HI, null))
+			.expectNext(ChatEvent.start(), ChatEvent.text("hi"), ChatEvent.done())
+			.verifyComplete();
+		assertThat(thread[0]).startsWith("boundedElastic-").isNotEqualTo(Thread.currentThread().getName());
 	}
 
 	@Test

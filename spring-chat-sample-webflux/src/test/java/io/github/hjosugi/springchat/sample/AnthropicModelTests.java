@@ -124,7 +124,7 @@ class AnthropicModelTests {
 		post("options-1", "hi");
 
 		JsonNode body = single().body();
-		assertThat(body.get("temperature").asDouble()).isEqualTo(0.3);
+		assertThat(body.get("stop_sequences").toString()).isEqualTo("[\"THE END\"]");
 		assertThat(body.get("model").asString()).isEqualTo("claude-opus-5-5");
 		assertThat(body.get("max_tokens").asInt()).isEqualTo(64000);
 	}
@@ -226,7 +226,9 @@ class AnthropicModelTests {
 			.POST(HttpRequest.BodyPublishers
 				.ofString(json.writeValueAsString(Map.of("conversationId", conversationId, "text", text))))
 			.build();
-		HttpResponse<String> response = this.http.send(request, HttpResponse.BodyHandlers.ofString());
+		// With a limit, so that a reply that never ends fails its test and does not hold the build.
+		HttpResponse<String> response = this.http.sendAsync(request, HttpResponse.BodyHandlers.ofString())
+			.get(30, TimeUnit.SECONDS);
 		assertThat(response.statusCode()).isEqualTo(200);
 		return response.body();
 	}
@@ -238,7 +240,7 @@ class AnthropicModelTests {
 		ChatPromptCustomizer orderTools() {
 			return (prompt, request) -> prompt.tools(new OrderTools())
 				.toolContext(Map.of("conversation", request.conversationId()))
-				.options(ChatOptions.builder().temperature(0.3));
+				.options(ChatOptions.builder().stopSequences(List.of("THE END")));
 		}
 
 	}

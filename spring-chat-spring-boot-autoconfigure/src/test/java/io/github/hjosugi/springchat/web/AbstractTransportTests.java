@@ -1,12 +1,15 @@
 package io.github.hjosugi.springchat.web;
 
+import java.io.InputStream;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.net.http.WebSocket;
 import java.net.http.WebSocketHandshakeException;
+import java.nio.charset.StandardCharsets;
 import java.time.Duration;
+import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
@@ -30,6 +33,11 @@ abstract class AbstractTransportTests {
 	private static final String START = "{\"type\":\"start\"}";
 
 	private static final String DONE = "{\"type\":\"done\"}";
+
+	private static final String CONFIRM = "{\"type\":\"confirm\",\"calls\":[{\"id\":\"call_1\","
+			+ "\"name\":\"cancelOrder\",\"arguments\":\"{\\\"orderId\\\":\\\"A-2\\\"}\"}]}";
+
+	private static final Duration REPLY_TIMEOUT = Duration.ofSeconds(30);
 
 	private static final JsonMapper json = JsonMapper.shared();
 
@@ -60,6 +68,12 @@ abstract class AbstractTransportTests {
 	}
 
 	@Test
+	void sseEndsAReplyWithoutAWordWithDone() throws Exception {
+		assertThat(post(message("silent")).body().lines().filter((line) -> !line.isEmpty()))
+			.containsExactly("event:start", "data:" + START, "event:done", "data:" + DONE);
+	}
+
+	@Test
 	void sseTellsProxiesNotToHoldTheStreamBack() throws Exception {
 		HttpResponse<String> response = post(message("hello"));
 
@@ -73,6 +87,38 @@ abstract class AbstractTransportTests {
 
 		assertThat(response.body()).contains("data:" + text("partial"), "event:error")
 			.doesNotContain("secret", "event:done");
+	}
+
+	@Test
+	void sseEndsAReplyThatWaitsForADecisionWithTheCallsToAllow() throws Exception {
+		HttpResponse<String> response = post(message("pause"));
+
+		assertThat(response.body().lines().filter((line) -> !line.isEmpty())).containsExactly("event:start",
+				"data:" + START, "event:text", "data:" + text("asking"), "event:confirm",
+				"data:" + CONFIRM);
+	}
+
+	@Test
+	void sseTakesTheDecisionsOnAPausedReply() throws Exception {
+		HttpResponse<String> response = post(decisions(true), "alice");
+
+		assertThat(response.body()).contains("data:" + text("decided: call_1=true by alice"), "event:done")
+			.doesNotContain("event:error");
+	}
+
+	@Test
+	void sseTellsWhyAReplyEndedBeforeItsEnd() throws Exception {
+		assertThat(post(message("cut")).body()).contains("data:" + text("long"),
+				"data:{\"type\":\"done\",\"reason\":\"truncated\"}");
+	}
+
+	@Test
+	void sseRejectsDecisionsThatAreNotValid() throws Exception {
+		for (String body : new String[] { json.writeValueAsString(Map.of("conversationId", "c1", "decisions", List.of(Map.of("allow", true)))),
+				json.writeValueAsString(Map.of("conversationId", "c1", "text", "hi", "decisions", List.of(Map.of("id", "call_1", "allow", true)))),
+				json.writeValueAsString(Map.of("conversationId", "c1", "decisions", Collections.nCopies(33, Map.of("id", "call_1", "allow", true)))) }) {
+			assertThat(post(body).body()).contains("event:error").doesNotContain("event:text", "event:confirm");
+		}
 	}
 
 	@Test
@@ -98,6 +144,20 @@ abstract class AbstractTransportTests {
 			assertThat(frames.through(DONE)).contains(text("you are " + ((user != null) ? user : "nobody")));
 			socket.abort();
 		}
+	}
+
+	@Test
+	void webSocketPausesAReplyAndTakesTheDecisions() throws Exception {
+		SocketFrames frames = new SocketFrames();
+		WebSocket socket = connect(frames, null, "alice");
+
+		socket.sendText(message("pause"), true).join();
+		assertThat(frames.through(CONFIRM)).containsExactly(START, text("asking"), CONFIRM);
+
+		socket.sendText(json.writeValueAsString(Map.of("type", "message", "conversationId", "c1", "decisions",
+				List.of(Map.of("id", "call_1", "allow", false)))), true).join();
+		assertThat(frames.through(DONE)).contains(text("decided: call_1=false by alice"));
+		socket.abort();
 	}
 
 	@Test
@@ -132,6 +192,45 @@ abstract class AbstractTransportTests {
 		await().atMost(Duration.ofSeconds(5))
 			.untilAsserted(() -> assertThat(this.chatService.cancelled.get() - before).isEqualTo(30));
 		socket.abort();
+	}
+
+	@Test
+	void webSocketStopReachesAReplyThatHoldsTheThreadItWasAskedOn() throws Exception {
+		SocketFrames frames = new SocketFrames();
+		WebSocket socket = connect(frames, null);
+		int before = this.chatService.cancelled.get();
+		socket.sendText(message("blocking"), true).join();
+		frames.through(text("x"));
+
+		socket.sendText("{\"type\":\"stop\"}", true).join();
+		socket.sendText(message("hello"), true).join();
+
+		assertThat(frames.through(DONE)).contains(text("hello"));
+		await().atMost(Duration.ofSeconds(5))
+			.untilAsserted(() -> assertThat(this.chatService.cancelled.get() - before).isEqualTo(1));
+		socket.abort();
+	}
+
+	@Test
+	void sseStreamsAReplyThatHoldsTheThreadItWasAskedOnAsItComes() throws Exception {
+		HttpRequest request = HttpRequest.newBuilder(uri("http", path() + "/stream"))
+			.header("Content-Type", "application/json")
+			.POST(HttpRequest.BodyPublishers.ofString(message("blocking")))
+			.build();
+		int before = this.chatService.cancelled.get();
+		InputStream body = this.http.sendAsync(request, HttpResponse.BodyHandlers.ofInputStream())
+			.get(REPLY_TIMEOUT.toSeconds(), TimeUnit.SECONDS)
+			.body();
+		String received = "";
+		while (!received.contains("\"delta\":\"x\"")) {
+			received += new String(body.readNBytes(64), StandardCharsets.UTF_8);
+		}
+
+		// Leaving ends it, at the next event the server tries to write.
+		body.close();
+
+		await().atMost(Duration.ofSeconds(10))
+			.untilAsserted(() -> assertThat(this.chatService.cancelled.get() - before).isEqualTo(1));
 	}
 
 	@Test
@@ -194,7 +293,20 @@ abstract class AbstractTransportTests {
 		if (user != null) {
 			request.header(TestApplication.USER, user);
 		}
-		return this.http.send(request.build(), HttpResponse.BodyHandlers.ofString());
+		// With a limit, so that a reply that never ends fails its test and does not hold the build.
+		return this.http
+			.sendAsync(request.build(),
+					(response) -> HttpResponse.BodySubscribers.mapping(
+							HttpResponse.BodySubscribers.ofString(StandardCharsets.UTF_8), AbstractTransportTests::fields))
+			.get(REPLY_TIMEOUT.toSeconds(), TimeUnit.SECONDS);
+	}
+
+	/**
+	 * A server may write one space after the colon of a field, and a browser drops it.
+	 * Spring Framework 7.1 writes it after {@code data}; earlier versions wrote none.
+	 */
+	private static String fields(String events) {
+		return events.replaceAll("(?m)^(\\w+): ", "$1:");
 	}
 
 	protected final String get(String path) throws Exception {
@@ -220,6 +332,11 @@ abstract class AbstractTransportTests {
 			builder.header(TestApplication.USER, user);
 		}
 		return builder.buildAsync(uri("ws", path() + "/ws"), frames).get(10, TimeUnit.SECONDS);
+	}
+
+	protected static String decisions(boolean allow) {
+		return json.writeValueAsString(
+				Map.of("conversationId", "c1", "decisions", List.of(Map.of("id", "call_1", "allow", allow))));
 	}
 
 	protected static String message(String text) {

@@ -2,13 +2,19 @@ package io.github.hjosugi.springchat.web;
 
 import java.security.Principal;
 import java.time.Duration;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Locale;
 
+import io.github.hjosugi.springchat.ChatReply;
 import io.github.hjosugi.springchat.ChatRequest;
 import io.github.hjosugi.springchat.ChatService;
+import io.github.hjosugi.springchat.ToolDecision;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 import org.jspecify.annotations.Nullable;
 import reactor.core.publisher.Flux;
+import reactor.core.scheduler.Schedulers;
 
 import org.springframework.util.StringUtils;
 
@@ -26,6 +32,10 @@ public class ChatEvents {
 	static final Duration KEEP_ALIVE = Duration.ofSeconds(5);
 
 	private static final int MAX_CONVERSATION_ID_LENGTH = 100;
+
+	private static final int MAX_DECISIONS = 32;
+
+	private static final int MAX_TOOL_CALL_ID_LENGTH = 200;
 
 	private static final Log logger = LogFactory.getLog(ChatEvents.class);
 
@@ -47,23 +57,53 @@ public class ChatEvents {
 	public Flux<ChatEvent> stream(BrowserMessage message, @Nullable Principal principal) {
 		String conversationId = message.conversationId();
 		String text = message.text();
-		if (!StringUtils.hasText(conversationId) || !StringUtils.hasText(text)) {
-			return rejected("A message needs a conversationId and a text.");
+		List<ToolDecision> decisions = decisions(message);
+		if (decisions == null) {
+			return rejected("The decisions are not valid.");
+		}
+		if (!StringUtils.hasText(conversationId) || StringUtils.hasText(text) == !decisions.isEmpty()) {
+			return rejected("A message needs a conversationId and a text, or decisions.");
 		}
 		if (conversationId.length() > MAX_CONVERSATION_ID_LENGTH) {
 			return rejected("The conversationId is longer than %d characters.".formatted(MAX_CONVERSATION_ID_LENGTH));
 		}
-		if (text.length() > this.maxMessageLength) {
+		if (text != null && text.length() > this.maxMessageLength) {
 			return rejected("The message is longer than %d characters.".formatted(this.maxMessageLength));
 		}
-		return stream(new ChatRequest(conversationId, text, principal));
+		return stream(new ChatRequest(conversationId, decisions.isEmpty() ? text : "", principal, decisions));
+	}
+
+	/**
+	 * The decisions of a message: none, or {@code null} if one is not valid.
+	 */
+	private static @Nullable List<ToolDecision> decisions(BrowserMessage message) {
+		if (message.decisions() == null || message.decisions().isEmpty()) {
+			return List.of();
+		}
+		if (message.decisions().size() > MAX_DECISIONS) {
+			return null;
+		}
+		List<ToolDecision> decisions = new ArrayList<>();
+		for (BrowserMessage.Decision decision : message.decisions()) {
+			if (decision == null || !StringUtils.hasText(decision.id())
+					|| decision.id().length() > MAX_TOOL_CALL_ID_LENGTH) {
+				return null;
+			}
+			decisions.add(new ToolDecision(decision.id(), decision.allow()));
+		}
+		return decisions;
 	}
 
 	private Flux<ChatEvent> stream(ChatRequest request) {
-		Flux<ChatEvent> reply = Flux.defer(() -> this.chatService.stream(request))
-			.filter((delta) -> !delta.isEmpty())
-			.map(ChatEvent::text)
+		Flux<ChatEvent> reply = Flux.defer(() -> this.chatService.reply(request))
+			// Not on the thread of the web server: a model may read its whole stream on the
+			// thread that subscribes, as Spring AI's Gemini model does, and that thread
+			// could then neither write the reply nor take a stop.
+			.subscribeOn(Schedulers.boundedElastic())
+			.map(ChatEvents::event)
+			.filter((event) -> !ChatEvent.TEXT.equals(event.type()) || !event.delta().isEmpty())
 			.startWith(ChatEvent.start())
+			// A reply that the service ends itself has ended: this one is for the others.
 			.concatWithValues(ChatEvent.done())
 			.onErrorResume((ex) -> {
 				// The cause may name the model provider or a key, so the browser gets none of it.
@@ -72,6 +112,17 @@ public class ChatEvents {
 			});
 		Flux<ChatEvent> pings = Flux.interval(KEEP_ALIVE).onBackpressureDrop().map((tick) -> ChatEvent.ping());
 		return reply.mergeWith(pings).takeUntil(ChatEvent::endsReply);
+	}
+
+	private static ChatEvent event(ChatReply reply) {
+		return switch (reply) {
+			case ChatReply.Text text -> ChatEvent.text(text.delta());
+			case ChatReply.Confirmation confirmation -> ChatEvent.confirm(confirmation.calls()
+				.stream()
+				.map((call) -> new ChatEvent.Call(call.id(), call.name(), call.arguments()))
+				.toList());
+			case ChatReply.Ended ended -> ChatEvent.done(ended.reason().name().toLowerCase(Locale.ROOT));
+		};
 	}
 
 	private static Flux<ChatEvent> rejected(String reason) {

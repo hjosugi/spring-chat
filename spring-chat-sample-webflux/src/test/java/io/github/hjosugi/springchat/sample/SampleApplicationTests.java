@@ -87,7 +87,8 @@ class SampleApplicationTests {
 			.header("Content-Type", "application/json")
 			.POST(HttpRequest.BodyPublishers.ofString(json))
 			.build();
-		return this.http.send(request, HttpResponse.BodyHandlers.ofString());
+		// With a limit, so that a reply that never ends fails its test and does not hold the build.
+		return this.http.sendAsync(request, HttpResponse.BodyHandlers.ofString()).get(30, TimeUnit.SECONDS);
 	}
 
 	private String get(String path) throws Exception {

@@ -18,4 +18,16 @@ public interface ChatService {
 	 */
 	Flux<String> stream(ChatRequest request);
 
+	/**
+	 * Streams the reply as pieces of text and the other things a reply can hold: a tool
+	 * call that waits for the user's decision, or the reason why the reply ended before
+	 * its end. The chat asks this one. It is {@link #stream} by default, which has only
+	 * text. The default service overrides it.
+	 * @param request the message, or the decisions on a paused reply, and who sent it
+	 * @return the pieces of the reply
+	 */
+	default Flux<ChatReply> reply(ChatRequest request) {
+		return stream(request).map(ChatReply.Text::new);
+	}
+
 }

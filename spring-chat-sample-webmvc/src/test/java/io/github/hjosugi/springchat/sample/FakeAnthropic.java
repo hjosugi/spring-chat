@@ -65,10 +65,21 @@ final class FakeAnthropic {
 		this.clientGone = new CompletableFuture<>();
 	}
 
+	/**
+	 * The key of a request: a bearer token since Spring AI 2.1, the x-api-key header before.
+	 */
+	private static String apiKey(HttpExchange exchange) {
+		String authorization = exchange.getRequestHeaders().getFirst("Authorization");
+		if (authorization != null && authorization.startsWith("Bearer ")) {
+			return authorization.substring("Bearer ".length());
+		}
+		return exchange.getRequestHeaders().getFirst("x-api-key");
+	}
+
 	private void handle(HttpExchange exchange) throws IOException {
 		JsonNode body = json.readTree(exchange.getRequestBody().readAllBytes());
 		this.requests.add(new Request(exchange.getRequestURI().getPath(),
-				exchange.getRequestHeaders().getFirst("x-api-key"), body));
+				apiKey(exchange), body));
 		exchange.getResponseHeaders().add("Content-Type", "text/event-stream");
 		exchange.sendResponseHeaders(200, 0);
 		try (OutputStream out = exchange.getResponseBody()) {

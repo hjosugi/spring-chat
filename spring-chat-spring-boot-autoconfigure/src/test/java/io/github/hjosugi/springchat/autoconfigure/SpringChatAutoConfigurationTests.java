@@ -1,10 +1,13 @@
 package io.github.hjosugi.springchat.autoconfigure;
 
+import java.time.Duration;
+import java.time.Instant;
 import java.util.List;
 
 import io.github.hjosugi.springchat.ChatClientChatService;
 import io.github.hjosugi.springchat.ChatPromptCustomizer;
 import io.github.hjosugi.springchat.ChatProperties;
+import io.github.hjosugi.springchat.ChatRequest;
 import io.github.hjosugi.springchat.ChatService;
 import io.github.hjosugi.springchat.ChatTransport;
 import io.github.hjosugi.springchat.web.BrowserMessage;
@@ -19,6 +22,17 @@ import org.springframework.aot.hint.RuntimeHints;
 import org.springframework.aot.hint.predicate.RuntimeHintsPredicates;
 
 import org.springframework.ai.chat.client.ChatClient;
+import org.springframework.ai.chat.messages.AssistantMessage;
+import org.springframework.ai.chat.messages.UserMessage;
+import org.springframework.ai.chat.model.ChatModel;
+import org.springframework.ai.chat.model.ChatResponse;
+import org.springframework.ai.chat.model.Generation;
+import org.springframework.ai.chat.prompt.Prompt;
+import org.springframework.ai.session.CreateSessionRequest;
+import org.springframework.ai.session.DefaultSessionService;
+import org.springframework.ai.session.InMemorySessionRepository;
+import org.springframework.ai.session.Session;
+import org.springframework.ai.session.SessionService;
 import org.springframework.boot.autoconfigure.AutoConfigurations;
 import org.springframework.boot.diagnostics.FailureAnalysis;
 import org.springframework.boot.test.context.FilteredClassLoader;
@@ -27,6 +41,7 @@ import org.springframework.boot.test.context.runner.ReactiveWebApplicationContex
 import org.springframework.boot.test.context.runner.WebApplicationContextRunner;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.context.annotation.Scope;
 import org.springframework.core.annotation.Order;
 import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.web.socket.config.annotation.WebSocketConfigurer;
@@ -155,11 +170,103 @@ class SpringChatAutoConfigurationTests {
 	}
 
 	@Test
+	void withoutASessionRepositoryConversationsAreKeptInMemoryAndExpire() {
+		this.servlet.withUserConfiguration(ChatClientConfiguration.class).run((context) -> {
+			assertThat(context).hasSingleBean(SessionService.class)
+				.hasSingleBean(SpringChatAutoConfiguration.ExpiredSessionSweeper.class);
+			Session session = context.getBean(SessionService.class).create(CreateSessionRequest.builder().build());
+			assertThat(session.expiresAt()).isAfter(Instant.now().plus(Duration.ofHours(23)))
+				.isBefore(Instant.now().plus(Duration.ofHours(25)));
+		});
+	}
+
+	@Test
+	void theTimeToLiveOfAConversationIsAProperty() {
+		this.servlet.withUserConfiguration(ChatClientConfiguration.class)
+			.withPropertyValues("spring-chat.memory.time-to-live=2h")
+			.run((context) -> {
+				Session session = context.getBean(SessionService.class).create(CreateSessionRequest.builder().build());
+				assertThat(session.expiresAt()).isBefore(Instant.now().plus(Duration.ofHours(3)));
+			});
+	}
+
+	@Test
+	void theSessionServiceOfTheApplicationIsUsedAsItIs() {
+		this.servlet.withUserConfiguration(ChatClientConfiguration.class, SessionServiceConfiguration.class)
+			.run((context) -> {
+				assertThat(context).hasSingleBean(SessionService.class)
+					.doesNotHaveBean(SpringChatAutoConfiguration.ExpiredSessionSweeper.class);
+				assertThat(context.getBean(SessionService.class)).isSameAs(context.getBean("applicationSessions"));
+			});
+	}
+
+	@Test
+	void withoutMemoryNoSessionServiceIsCreated() {
+		this.servlet.withUserConfiguration(ChatClientConfiguration.class)
+			.withPropertyValues("spring-chat.memory.enabled=false")
+			.run((context) -> assertThat(context).hasSingleBean(ChatClientChatService.class)
+				.doesNotHaveBean(SessionService.class));
+	}
+
+	@Test
+	void theChatRemembersTheConversationThroughTheAutoConfiguration() {
+		this.servlet.withUserConfiguration(EchoChatClientConfiguration.class).run((context) -> {
+			ChatService chat = context.getBean(ChatService.class);
+
+			assertThat(chat.stream(new ChatRequest("c1", "one", () -> "alice")).collectList().block())
+				.containsExactly("1 messages: ", "one");
+			assertThat(chat.stream(new ChatRequest("c1", "two", () -> "alice")).collectList().block())
+				.containsExactly("2 messages: ", "two");
+			assertThat(chat.stream(new ChatRequest("c1", "two", () -> "bob")).collectList().block())
+				.containsExactly("1 messages: ", "two");
+		});
+	}
+
+	@Test
+	void theChatRemembersNothingWithoutMemory() {
+		this.servlet.withUserConfiguration(EchoChatClientConfiguration.class)
+			.withPropertyValues("spring-chat.memory.enabled=false")
+			.run((context) -> {
+				ChatService chat = context.getBean(ChatService.class);
+
+				chat.stream(new ChatRequest("c1", "one")).blockLast();
+				assertThat(chat.stream(new ChatRequest("c1", "two")).collectList().block())
+					.containsExactly("1 messages: ", "two");
+			});
+	}
+
+	@Test
+	void theWindowOfTheMemoryIsAProperty() {
+		this.servlet.withUserConfiguration(EchoChatClientConfiguration.class)
+			.withPropertyValues("spring-chat.memory.max-messages=2")
+			.run((context) -> {
+				ChatService chat = context.getBean(ChatService.class);
+
+				chat.stream(new ChatRequest("c1", "one")).blockLast();
+				chat.stream(new ChatRequest("c1", "two")).blockLast();
+				assertThat(chat.stream(new ChatRequest("c1", "three")).collectList().block())
+					.containsExactly("2 messages: ", "three");
+			});
+	}
+
+	@Test
+	void aMemoryThatCouldNotWorkFailsTheStart() {
+		this.servlet.withUserConfiguration(ChatClientConfiguration.class)
+			.withPropertyValues("spring-chat.memory.max-messages=-1")
+			.run((context) -> assertThat(context).hasFailed());
+		this.servlet.withUserConfiguration(ChatClientConfiguration.class)
+			.withPropertyValues("spring-chat.memory.time-to-live=0s")
+			.run((context) -> assertThat(context).hasFailed());
+	}
+
+	@Test
 	void aNativeImageKeepsWhatTheJsonAndTheTemplatesRead() {
 		RuntimeHints hints = new RuntimeHints();
 		new ChatRuntimeHints().registerHints(hints, getClass().getClassLoader());
 
-		for (Class<?> type : List.of(ChatEvent.class, BrowserMessage.class, ChatView.class)) {
+		// The calls of a confirmation and the decisions on them are read and written as JSON too.
+		for (Class<?> type : List.of(ChatEvent.class, ChatEvent.Call.class, BrowserMessage.class,
+				BrowserMessage.Decision.class, ChatView.class)) {
 			assertThat(RuntimeHintsPredicates.reflection().onType(type)).as(type.getName()).accepts(hints);
 		}
 		assertThat(RuntimeHintsPredicates.reflection().onMethodInvocation(ChatView.class, "transport")).accepts(hints);
@@ -197,6 +304,44 @@ class SpringChatAutoConfigurationTests {
 		ChatPromptCustomizer first() {
 			return (prompt, request) -> {
 			};
+		}
+
+	}
+
+	@Configuration(proxyBeanMethods = false)
+	static class SessionServiceConfiguration {
+
+		@Bean
+		SessionService applicationSessions() {
+			return DefaultSessionService.builder().sessionRepository(InMemorySessionRepository.builder().build()).build();
+		}
+
+	}
+
+	/**
+	 * A real client on a model that tells how many user messages it was given.
+	 */
+	@Configuration(proxyBeanMethods = false)
+	static class EchoChatClientConfiguration {
+
+		@Bean
+		@Scope("prototype")
+		ChatClient.Builder chatClientBuilder() {
+			return ChatClient.builder(new ChatModel() {
+
+				@Override
+				public ChatResponse call(Prompt prompt) {
+					throw new UnsupportedOperationException();
+				}
+
+				@Override
+				public Flux<ChatResponse> stream(Prompt prompt) {
+					long messages = prompt.getInstructions().stream().filter(UserMessage.class::isInstance).count();
+					return Flux.just(messages + " messages: ", prompt.getUserMessage().getText())
+						.map((text) -> new ChatResponse(List.of(new Generation(new AssistantMessage(text)))));
+				}
+
+			});
 		}
 
 	}

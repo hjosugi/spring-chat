@@ -1,5 +1,7 @@
 package io.github.hjosugi.springchat;
 
+import java.time.Duration;
+
 import org.jspecify.annotations.Nullable;
 
 import org.springframework.boot.context.properties.ConfigurationProperties;
@@ -71,8 +73,29 @@ public record ChatProperties(@DefaultValue("true") boolean enabled, @DefaultValu
 	 * The conversation memory of the default chat service.
 	 *
 	 * @param enabled Whether replies see the earlier messages of their conversation.
+	 * @param maxMessages How many of the latest messages a reply sees, a whole turn
+	 * more at most; 0 for all of them.
+	 * @param timeToLive How long a conversation is kept after it was started, when the
+	 * application has no session service of its own.
 	 */
-	public record Memory(@DefaultValue("true") boolean enabled) {
+	public record Memory(@DefaultValue("true") boolean enabled, @DefaultValue("20") int maxMessages,
+			@DefaultValue("24h") Duration timeToLive) {
+
+		/**
+		 * A memory that the chat can run with.
+		 * @throws IllegalArgumentException if the number of messages is negative or the
+		 * time to live is not positive
+		 */
+		public Memory {
+			if (maxMessages < 0) {
+				throw new IllegalArgumentException(
+						"spring-chat.memory.max-messages must not be negative: " + maxMessages);
+			}
+			if (timeToLive.isNegative() || timeToLive.isZero()) {
+				throw new IllegalArgumentException("spring-chat.memory.time-to-live must be positive: " + timeToLive);
+			}
+		}
+
 	}
 
 }

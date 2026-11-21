@@ -1,9 +1,34 @@
 // Connects each <deep-chat class="spring-chat"> to the server, over SSE or WebSocket.
-// Both carry the same events: start, then text (with a delta) and ping, then done or error.
+// Both carry the same events: start, then text (with a delta) and ping, then done, confirm or error.
+// A confirm ends a reply that waits for the user to allow tool calls; the buttons it shows
+// answer with a message that has decisions in place of a text.
 
 const INTERRUPTED = 'The connection was lost before the reply finished.';
 const UNREACHABLE = 'The chat server could not be reached.';
 const refused = (status) => `The chat server refused the message (HTTP ${status}).`;
+const REASONS = {
+  truncated: 'The reply was cut: it reached the longest length that the model may write.',
+  filtered: 'The model stopped the reply.',
+};
+// A model can end a reply without a word: Anthropic refuses that way.
+const EMPTY = 'The model gave no answer.';
+const LABELS = { intro: 'The assistant wants to run:', allow: 'Allow', deny: 'Do not allow' };
+
+// The tool calls are the model's own words: they are text, never markup.
+function escapeHtml(text) {
+  return String(text).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
+}
+
+function confirmHtml(calls) {
+  const items = calls
+    .map((call) => `<li><code>${escapeHtml(call.name)}</code> <code>${escapeHtml(call.arguments)}</code></li>`)
+    .join('');
+  return (
+    `<div class="spring-chat-confirm"><p>${LABELS.intro}</p><ul>${items}</ul>` +
+    `<button class="spring-chat-allow">${LABELS.allow}</button> ` +
+    `<button class="spring-chat-deny">${LABELS.deny}</button></div>`
+  );
+}
 
 // Spring Security's CSRF token: from the fragment when the template had it,
 // else from the meta tags that Spring Security's reference has pages carry.
@@ -112,12 +137,23 @@ function configure(chat) {
   const data = chat.dataset;
   const conversationId = newConversationId();
   const transport = data.transport === 'websocket' ? socketTransport(data) : sseTransport(data);
+  let pending = null; // the tool calls that the last reply waits for
+  let decisions = null; // the answer to them that the buttons are sending
+
+  // A button answers for every call of the reply: the model asked for them together.
+  function decide(allow) {
+    if (!pending) return;
+    decisions = pending.map((call) => ({ id: call.id, allow }));
+    pending = null;
+    chat.submitUserMessage({ text: allow ? LABELS.allow : LABELS.deny });
+  }
 
   chat.connect = {
     stream: true,
     handler: (body, signals) => {
       let started = false;
       let open = true;
+      let answered = false; // whether the reply has any text
       // deep-chat renders a text asynchronously, so what follows one waits for it:
       // otherwise the end of a reply could overtake its last words.
       let rendered = Promise.resolve();
@@ -130,8 +166,12 @@ function configure(chat) {
           // Every reply begins with start: what comes before it belongs to a reply that was stopped.
           if (event.type === 'start') started = true;
           else if (!started) return;
-          else if (event.type === 'text') afterRendering(() => signals.onResponse({ text: event.delta }));
-          else if (event.type === 'done') reply.close();
+          else if (event.type === 'text') {
+            answered = true;
+            afterRendering(() => signals.onResponse({ text: event.delta }));
+          }
+          else if (event.type === 'done') reply.close(event.reason);
+          else if (event.type === 'confirm') reply.confirm(event.calls);
           else if (event.type === 'error') reply.fail(event.message);
         },
         fail(message) {
@@ -143,18 +183,35 @@ function configure(chat) {
             chat.addMessage({ error: message });
           });
         },
-        close() {
+        close(reason) {
           if (!open) return;
           open = false;
-          afterRendering(() => signals.onClose());
+          afterRendering(() => {
+            signals.onClose();
+            const note = REASONS[reason] ?? (answered || reason === 'stopped' ? null : EMPTY);
+            if (note) chat.addMessage({ error: note });
+          });
+        },
+        confirm(calls) {
+          if (!open) return;
+          open = false;
+          afterRendering(() => {
+            signals.onClose();
+            pending = calls;
+            chat.addMessage({ html: confirmHtml(calls) });
+          });
         },
       };
 
       signals.onOpen();
-      const stop = transport({ conversationId, text: body.messages.at(-1).text }, reply);
+      // Typing another message instead of pressing a button leaves the calls unanswered.
+      const answer = decisions;
+      decisions = null;
+      if (!answer) pending = null;
+      const stop = transport(answer ? { conversationId, decisions: answer } : { conversationId, text: body.messages.at(-1).text }, reply);
       signals.stopClicked.listener = () => {
         // Closed first, so that what stopping sets off cannot be taken for a failure.
-        reply.close();
+        reply.close('stopped');
         stop();
       };
     },
@@ -188,6 +245,17 @@ function configure(chat) {
         boxShadow: 'none',
       },
       text: { padding: '0.625rem 2.75rem 0.625rem 1rem', fontSize: '1rem' },
+    },
+  };
+  const button = { borderRadius: '0.5rem', border: '1px solid var(--spring-chat-border)', padding: '0.25rem 0.75rem', cursor: 'pointer', font: 'inherit' };
+  chat.htmlClassUtilities = {
+    'spring-chat-allow': {
+      events: { click: () => decide(true) },
+      styles: { default: { ...button, backgroundColor: 'var(--spring-chat-primary)', color: 'var(--spring-chat-primary-foreground)' } },
+    },
+    'spring-chat-deny': {
+      events: { click: () => decide(false) },
+      styles: { default: { ...button, backgroundColor: 'transparent', color: 'var(--spring-chat-foreground)' } },
     },
   };
   // Errors are the server's own sentences, so they are shown as they are.
