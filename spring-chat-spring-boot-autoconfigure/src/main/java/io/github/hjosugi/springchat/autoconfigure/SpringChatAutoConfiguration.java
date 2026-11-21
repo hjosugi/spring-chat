@@ -116,7 +116,7 @@ public final class SpringChatAutoConfiguration {
 
 		ExpiredSessionSweeper(SessionService sessions, Duration timeToLive) {
 			// Often enough that an expired conversation does not stay long, rarely enough to cost nothing.
-			long minutes = Math.clamp(timeToLive.toMinutes() / 10, 1, 60);
+			long minutes = Math.max(1, Math.min(60, timeToLive.toMinutes() / 10));
 			this.executor.scheduleWithFixedDelay(() -> sweep(sessions), minutes, minutes, TimeUnit.MINUTES);
 		}
 

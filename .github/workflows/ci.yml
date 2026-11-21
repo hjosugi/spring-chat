@@ -11,14 +11,19 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        # The oldest Java that the chat supports, and the newest long-term one.
+        java: [17, 21]
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-java@v6
         with:
           distribution: temurin
-          java-version: 21
+          java-version: ${{ matrix.java }}
           cache: maven
       - name: Build and test
         run: ./mvnw --batch-mode --no-transfer-progress verify
       - name: Test on virtual threads
+        if: matrix.java == 21
         run: ./mvnw --batch-mode --no-transfer-progress verify -Pvirtual-threads

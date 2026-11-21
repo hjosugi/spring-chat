@@ -122,7 +122,8 @@ class ChatClientChatServiceReplyTests {
 
 		assertThat(this.tools.cancelled).isEmpty();
 		assertThat(answer).contains(new ChatReply.Text("Done: "));
-		Message last = this.model.prompts.get(this.model.prompts.size() - 1).getInstructions().getLast();
+		List<Message> instructions = this.model.prompts.get(this.model.prompts.size() - 1).getInstructions();
+		Message last = instructions.get(instructions.size() - 1);
 		assertThat(last).isInstanceOf(ToolResponseMessage.class);
 		assertThat(((ToolResponseMessage) last).getResponses().get(0).responseData()).contains("did not allow");
 	}
@@ -323,7 +324,8 @@ class ChatClientChatServiceReplyTests {
 		@Override
 		public Flux<ChatResponse> stream(Prompt prompt) {
 			this.prompts.add(prompt);
-			Message last = prompt.getInstructions().getLast();
+			List<Message> instructions = prompt.getInstructions();
+			Message last = instructions.get(instructions.size() - 1);
 			if (last instanceof ToolResponseMessage results) {
 				return text("stop", "Done: ", results.getResponses().get(0).responseData());
 			}

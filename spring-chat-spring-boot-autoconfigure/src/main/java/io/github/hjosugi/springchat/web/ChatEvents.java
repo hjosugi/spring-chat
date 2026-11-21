@@ -114,15 +114,24 @@ public class ChatEvents {
 		return reply.mergeWith(pings).takeUntil(ChatEvent::endsReply);
 	}
 
+	/**
+	 * Not a {@code switch} over the sealed {@link ChatReply}: patterns in a switch need
+	 * Java 21, and the chat runs on 17.
+	 */
 	private static ChatEvent event(ChatReply reply) {
-		return switch (reply) {
-			case ChatReply.Text text -> ChatEvent.text(text.delta());
-			case ChatReply.Confirmation confirmation -> ChatEvent.confirm(confirmation.calls()
+		if (reply instanceof ChatReply.Text text) {
+			return ChatEvent.text(text.delta());
+		}
+		if (reply instanceof ChatReply.Confirmation confirmation) {
+			return ChatEvent.confirm(confirmation.calls()
 				.stream()
 				.map((call) -> new ChatEvent.Call(call.id(), call.name(), call.arguments()))
 				.toList());
-			case ChatReply.Ended ended -> ChatEvent.done(ended.reason().name().toLowerCase(Locale.ROOT));
-		};
+		}
+		if (reply instanceof ChatReply.Ended ended) {
+			return ChatEvent.done(ended.reason().name().toLowerCase(Locale.ROOT));
+		}
+		throw new IllegalStateException("Not a reply of the chat: " + reply);
 	}
 
 	private static Flux<ChatEvent> rejected(String reason) {

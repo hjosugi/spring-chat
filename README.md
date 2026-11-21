@@ -9,7 +9,7 @@ An AI chat for Spring Boot 4 and Thymeleaf. Add one dependency and a model, and 
 
 | spring-chat | Spring Boot | Spring AI | Java |
 | --- | --- | --- | --- |
-| 0.1 | 4.2 | 2.1 | 21 or later |
+| 0.1 | 4.2 | 2.1 | 17 or later |
 
 ## Use it
 
@@ -172,7 +172,7 @@ The endpoints are open: anyone who can reach them can spend the model's tokens. 
 - **A conversation lasts as long as the page.** The browser makes up the conversation id on load, so a reload starts a new conversation.
 - **Old conversations are removed** after `spring-chat.memory.time-to-live`, when they are kept in memory. With a session repository of your own, sessions are not swept by Spring AI: call `SessionService.deleteExpiredSessions` from a scheduler.
 - **The model is asked on a worker thread.** Some models read their whole stream on the thread that subscribes, as Spring AI's Gemini model does. On a thread of the web server that would hold the reply back until its end, and no stop would reach it.
-- **Virtual threads work.** With `spring.threads.virtual.enabled=true` the web server runs on them, and Reactor's `boundedElastic`, where the chat asks the model and sends over WebSocket, runs on them with `-Dreactor.schedulers.defaultBoundedElasticOnVirtualThreads=true`. `./mvnw verify -Pvirtual-threads` runs the tests that way. The chat holds no `synchronized` lock while it waits for the network, which on Java 21 would keep a virtual thread on its carrier thread; a tool or a model client of your own may.
+- **Virtual threads work**, on Java 21 or later, where Spring Boot offers them. With `spring.threads.virtual.enabled=true` the web server runs on them, and Reactor's `boundedElastic`, where the chat asks the model and sends over WebSocket, runs on them with `-Dreactor.schedulers.defaultBoundedElasticOnVirtualThreads=true`. `./mvnw verify -Pvirtual-threads` runs the tests that way. The chat holds no `synchronized` lock while it waits for the network, which on Java 21 would keep a virtual thread on its carrier thread; a tool or a model client of your own may.
 - **A reply that was cut says so.** The chat reads the finish reason of the model, and the page tells the user that the reply reached the length limit or was stopped by the model. A reply without a word, which is how Anthropic's model can refuse, shows that the model gave no answer.
 - **A conversation has one reply at a time.** Spring AI's session does not know whether a reply is still being written, and two that run at once mix their messages up. A new message ends the reply that is still being written for its conversation, as a stop would, over either transport. Decisions that arrive while a reply is being written are refused.
 - **Errors show one fixed sentence.** The cause is in the server log only, because it can name the provider or a key.
