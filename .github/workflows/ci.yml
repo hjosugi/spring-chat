@@ -10,11 +10,18 @@ permissions:
 
 jobs:
   build:
+    name: build (Java ${{ matrix.java }}${{ matrix.profile && format(', {0}', matrix.profile) || '' }})
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        # The oldest Java that the chat supports, and the newest long-term one.
-        java: [17, 21]
+        include:
+          # The oldest Java that the chat supports, and the newest long-term one, and the
+          # newest again with the tests on virtual threads. Each is a job of its own, so
+          # that they run side by side.
+          - java: 17
+          - java: 21
+          - java: 21
+            profile: virtual-threads
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-java@v6
@@ -22,8 +29,6 @@ jobs:
           distribution: temurin
           java-version: ${{ matrix.java }}
           cache: maven
+      # The modules build side by side too: .mvn/maven.config.
       - name: Build and test
-        run: ./mvnw --batch-mode --no-transfer-progress verify
-      - name: Test on virtual threads
-        if: matrix.java == 21
-        run: ./mvnw --batch-mode --no-transfer-progress verify -Pvirtual-threads
+        run: ./mvnw --batch-mode --no-transfer-progress verify ${{ matrix.profile && format('-P{0}', matrix.profile) || '' }}

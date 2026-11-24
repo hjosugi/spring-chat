@@ -96,6 +96,8 @@ if $DRY_RUN; then
 	say "Done. Nothing was signed or uploaded. To publish: $REPO/scripts/publish-to-central.sh $VERSION"
 else
 	say "Tests, jars, signatures, and the upload to the Central Portal"
-	./mvnw -B -ntp -s "$WORK/settings.xml" -Prelease clean deploy -Dgpg.keyname="$FINGERPRINT"
+	# -T 1: the modules build side by side by default (.mvn/maven.config), but the upload to
+	# the Central Portal is one bundle, and it is built one module after the other.
+	./mvnw -B -ntp -T 1 -s "$WORK/settings.xml" -Prelease clean deploy -Dgpg.keyname="$FINGERPRINT"
 	say "Uploaded. Look at it, and press Publish: https://central.sonatype.com/publishing/deployments"
 fi

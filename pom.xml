@@ -86,6 +86,30 @@
         </dependencies>
     </dependencyManagement>
 
+    <build>
+        <plugins>
+            <!--
+              The test classes run side by side; the tests inside one class still run one after
+              the other, because a class keeps its own state (a stand-in for the model's API, a
+              Spring context). Every class starts its servers on a random port and changes no
+              system property, so the classes do not meet.
+            -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-surefire-plugin</artifactId>
+                <configuration>
+                    <properties>
+                        <configurationParameters>
+                            junit.jupiter.execution.parallel.enabled = true
+                            junit.jupiter.execution.parallel.mode.default = same_thread
+                            junit.jupiter.execution.parallel.mode.classes.default = concurrent
+                        </configurationParameters>
+                    </properties>
+                </configuration>
+            </plugin>
+        </plugins>
+    </build>
+
     <profiles>
         <!--
           What Maven Central asks of a release: a jar of the sources and one of the Javadoc,
