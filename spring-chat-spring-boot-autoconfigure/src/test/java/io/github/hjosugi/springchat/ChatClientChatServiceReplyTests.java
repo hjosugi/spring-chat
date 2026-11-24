@@ -7,6 +7,7 @@ import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 
 import org.junit.jupiter.api.Test;
 import reactor.core.publisher.Flux;
@@ -172,6 +173,25 @@ class ChatClientChatServiceReplyTests {
 			.isInstanceOf(IllegalStateException.class)
 			.hasMessageContaining("Nothing in the conversation waits");
 		assertThat(this.tools.cancelled).containsExactly("alice cancelled A-2");
+	}
+
+	@Test
+	void aReplyIsOverBeforeItsEndIsSeen() {
+		ChatReply.Confirmation confirmation = pause("Cancel A-2");
+		ToolDecision allow = new ToolDecision(confirmation.calls().get(0).id(), true);
+		AtomicReference<Throwable> next = new AtomicReference<>();
+
+		// Whoever sees the end of a reply can answer it at once: the conversation must be free
+		// by then, and not a moment later. The server sends the next request after the end
+		// that the browser saw, and a test that blocks for the end does the same.
+		this.service.reply(decides("alice", allow))
+			.doOnComplete(() -> this.service.reply(decides("alice", allow)).subscribe((reply) -> {
+			}, next::set))
+			.blockLast();
+
+		await().untilAtomic(next, org.hamcrest.Matchers.notNullValue());
+		assertThat(next.get()).isInstanceOf(IllegalStateException.class)
+			.hasMessageContaining("Nothing in the conversation waits");
 	}
 
 	@Test

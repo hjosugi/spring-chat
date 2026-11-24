@@ -133,8 +133,12 @@ public class ChatClientChatService implements ChatService {
 					earlier.tryEmitEmpty();
 				}
 			}
+			// The conversation is free when the end of its reply is signalled, and not a moment
+			// after: doFinally runs once the signal has been passed on, so whoever answers the
+			// end at once would still be refused. A cancel has no end, and doFinally frees it.
 			return Flux.defer(() -> decides ? resume(request, sessionId) : turn(request))
 				.takeUntilOther(stop.asMono())
+				.doOnTerminate(() -> this.running.remove(sessionId, stop))
 				.doFinally((signal) -> this.running.remove(sessionId, stop));
 		});
 	}
