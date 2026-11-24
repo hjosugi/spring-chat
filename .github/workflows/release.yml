@@ -1,0 +1,167 @@
+name: Release
+
+# Publishes a tagged release to Maven Central. A tag such as v0.1.2 starts it, and the pom
+# of that tag must say 0.1.2. Pushing to main does not publish: a version on Central cannot
+# be taken back, and it cannot be published twice.
+#
+# The upload waits in the Central Portal: look at it there, and press Publish
+# (autoPublish is false in the pom).
+#
+# It needs four secrets, in the repository or in the environment "central" (an environment
+# can also ask a reviewer to approve each run: Settings, Environments, central):
+#
+#   CENTRAL_TOKEN_USERNAME, CENTRAL_TOKEN_PASSWORD   a user token of the Central Portal
+#   GPG_PRIVATE_KEY                                  gpg --armor --export-secret-keys <the key's id>
+#   GPG_PASSPHRASE                                   the passphrase of that key
+#
+# To try it without a release, run it by hand (Actions, Release, Run workflow) with a tag
+# and a mode:
+#
+#   check     the secrets are there, the key signs and is on a keyserver, and the build signs
+#             its files; nothing is uploaded
+#   dry-run   the tests and the jars, with no signing and no upload; needs no secret
+#   publish   the upload to Central, as a tag does
+
+on:
+  push:
+    tags: ["v[0-9]+.[0-9]+.[0-9]+"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "The tag to build, such as v0.1.2"
+        required: true
+        type: string
+      mode:
+        description: "check, dry-run or publish"
+        required: true
+        type: choice
+        options: [check, dry-run, publish]
+        default: check
+
+permissions:
+  contents: read
+
+# One release at a time, and a started one is never cancelled halfway.
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  central:
+    runs-on: ubuntu-latest
+    environment: central
+    timeout-minutes: 30
+    env:
+      TAG: ${{ github.event_name == 'push' && github.ref_name || inputs.tag }}
+      MODE: ${{ github.event_name == 'push' && 'publish' || inputs.mode }}
+    steps:
+      - name: The tag
+        run: |
+          [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "::error::The tag must look like v0.1.2, and this is '$TAG'."; exit 1; }
+          echo "VERSION=${TAG#v}" >> "$GITHUB_ENV"
+          echo "Mode: $MODE, tag: $TAG"
+
+      - uses: actions/checkout@v7
+        with:
+          ref: refs/tags/${{ env.TAG }}
+
+      - name: The pom of the tag says the release
+        run: |
+          POM_VERSION="$(sed -n 's|^    <version>\(.*\)</version>$|\1|p' pom.xml | head -1)"
+          [[ "$POM_VERSION" == "$VERSION" ]] || { echo "::error::The pom of $TAG says '$POM_VERSION', not $VERSION."; exit 1; }
+          echo "pom version $POM_VERSION"
+
+      - name: The version is not on Central yet
+        run: |
+          URL="https://repo.maven.apache.org/maven2/io/github/hjosugi/spring-chat-spring-boot-starter/$VERSION/spring-chat-spring-boot-starter-$VERSION.pom"
+          CODE="$(curl -s -o /dev/null -w '%{http_code}' "$URL" || true)"
+          echo "Maven Central answers $CODE for $VERSION"
+          if [[ "$MODE" == "publish" && "$CODE" != "404" ]]; then
+            echo "::error::Expected 404 from Maven Central for $VERSION and got $CODE: it is published already, or there is no network."
+            exit 1
+          fi
+
+      - name: The secrets are there
+        if: env.MODE != 'dry-run'
+        env:
+          CENTRAL_TOKEN_USERNAME: ${{ secrets.CENTRAL_TOKEN_USERNAME }}
+          CENTRAL_TOKEN_PASSWORD: ${{ secrets.CENTRAL_TOKEN_PASSWORD }}
+          GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
+          GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
+        run: |
+          missing=0
+          for name in CENTRAL_TOKEN_USERNAME CENTRAL_TOKEN_PASSWORD GPG_PRIVATE_KEY GPG_PASSPHRASE; do
+            if [[ -z "${!name:-}" ]]; then
+              echo "::error::The secret $name is not set (see the top of .github/workflows/release.yml)."
+              missing=1
+            fi
+          done
+          exit "$missing"
+
+      # The key is imported here, and the settings.xml that Maven reads the token from is
+      # written here: it holds the names of the environment variables, never their values.
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: 21
+          cache: maven
+          server-id: central
+          server-username: CENTRAL_TOKEN_USERNAME
+          server-password: CENTRAL_TOKEN_PASSWORD
+          gpg-private-key: ${{ env.MODE != 'dry-run' && secrets.GPG_PRIVATE_KEY || '' }}
+          gpg-passphrase: MAVEN_GPG_PASSPHRASE
+
+      - name: The key signs and Central can find it
+        if: env.MODE != 'dry-run'
+        env:
+          MAVEN_GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
+        run: |
+          FINGERPRINT="$(gpg --list-secret-keys --with-colons | awk -F: '$1=="fpr"{print $10; exit}')"
+          [[ -n "$FINGERPRINT" ]] || { echo "::error::The imported GPG_PRIVATE_KEY holds no secret key."; exit 1; }
+          echo "key $FINGERPRINT"
+          echo "release-check" > "$RUNNER_TEMP/sign-me.txt"
+          printf '%s' "$MAVEN_GPG_PASSPHRASE" | gpg --batch --pinentry-mode loopback --passphrase-fd 0 \
+            --local-user "$FINGERPRINT" --clearsign --output "$RUNNER_TEMP/sign-me.txt.asc" "$RUNNER_TEMP/sign-me.txt" \
+            || { echo "::error::The key could not sign: the passphrase in GPG_PASSPHRASE is wrong for GPG_PRIVATE_KEY."; exit 1; }
+          echo "the key signs"
+          for attempt in 1 2 3; do
+            if curl -fsS "https://keyserver.ubuntu.com/pks/lookup?op=get&options=mr&search=0x$FINGERPRINT" 2>/dev/null \
+              | grep -q 'BEGIN PGP PUBLIC KEY BLOCK'; then
+              echo "the public key is on keyserver.ubuntu.com"
+              exit 0
+            fi
+            sleep 10
+          done
+          echo "::error::The public key $FINGERPRINT is not on keyserver.ubuntu.com, so Central cannot check the signatures. Run: gpg --keyserver keyserver.ubuntu.com --send-keys $FINGERPRINT"
+          exit 1
+
+      # -T 1: the modules build side by side by default (.mvn/maven.config), but the upload
+      # to the Central Portal is one bundle, and it is built one module after the other.
+      - name: Dry run, the tests and the jars, with no signing and no upload
+        if: env.MODE == 'dry-run'
+        run: ./mvnw --batch-mode --no-transfer-progress -T 1 -Prelease clean verify -Dgpg.skip=true
+
+      - name: Check, the build signs its files, and nothing is uploaded
+        if: env.MODE == 'check'
+        env:
+          MAVEN_GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
+        run: ./mvnw --batch-mode --no-transfer-progress -T 1 -Prelease clean verify -DskipTests
+
+      - name: Publish, the tests, the jars, the signatures and the upload to the Central Portal
+        if: env.MODE == 'publish'
+        env:
+          CENTRAL_TOKEN_USERNAME: ${{ secrets.CENTRAL_TOKEN_USERNAME }}
+          CENTRAL_TOKEN_PASSWORD: ${{ secrets.CENTRAL_TOKEN_PASSWORD }}
+          MAVEN_GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
+        run: ./mvnw --batch-mode --no-transfer-progress -T 1 -Prelease clean deploy
+
+      - name: Where it waits
+        if: env.MODE == 'publish'
+        run: |
+          {
+            echo "### $TAG is uploaded to the Central Portal"
+            echo
+            echo "It waits there until you publish it: <https://central.sonatype.com/publishing/deployments>"
+            echo
+            echo "A version on Central cannot be taken back."
+          } >> "$GITHUB_STEP_SUMMARY"
