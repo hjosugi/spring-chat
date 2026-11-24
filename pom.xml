@@ -13,7 +13,7 @@
 
     <groupId>io.github.hjosugi</groupId>
     <artifactId>spring-chat-parent</artifactId>
-    <version>0.1.1-SNAPSHOT</version>
+    <version>0.1.1</version>
     <packaging>pom</packaging>
     <name>spring-chat</name>
     <description>An AI chat for Spring Boot and Thymeleaf, over SSE or WebSocket</description>
