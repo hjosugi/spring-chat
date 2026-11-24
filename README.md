@@ -31,11 +31,10 @@ Add the starter, a web stack and a model:
 </dependency>
 ```
 
-The starter is not on Maven Central yet. Install the release first:
+The starter is on [Maven Central](https://central.sonatype.com/artifact/io.github.hjosugi/spring-chat-spring-boot-starter). With Gradle:
 
-```bash
-git clone --branch v0.1.0 --depth 1 https://github.com/hjosugi/spring-chat
-(cd spring-chat && ./mvnw install -DskipTests)
+```kotlin
+implementation("io.github.hjosugi:spring-chat-spring-boot-starter:0.1.0")
 ```
 
 Start the application and open <http://localhost:8080/chat>.
