@@ -6,7 +6,7 @@
     <parent>
         <groupId>io.github.hjosugi</groupId>
         <artifactId>spring-chat-parent</artifactId>
-        <version>0.1.1</version>
+        <version>0.1.2-SNAPSHOT</version>
     </parent>
 
     <artifactId>spring-chat-sample-webflux</artifactId>
