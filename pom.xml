@@ -52,6 +52,7 @@
         <module>spring-chat-kotlin</module>
         <module>spring-chat-sample-webmvc</module>
         <module>spring-chat-sample-webflux</module>
+        <module>spring-chat-sample-kotlin</module>
     </modules>
 
     <properties>
