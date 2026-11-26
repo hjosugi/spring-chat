@@ -7,9 +7,9 @@ An AI chat for Spring Boot 4 and Thymeleaf. Add one dependency and a model, and 
 - **Spring MVC or WebFlux**: the same starter configures itself for either.
 - **No React and no build step**: the UI is the [Deep Chat](https://deepchat.dev) web component, served from a WebJar.
 
-| spring-chat | Spring Boot | Spring AI | Java |
-| --- | --- | --- | --- |
-| 0.1 | 4.2 | 2.1 | 17 or later |
+| spring-chat | Spring Boot | Spring AI | Java | Kotlin |
+| --- | --- | --- | --- | --- |
+| 0.1 | 4.2 | 2.1 | 17 or later | 2.4, the version Spring Boot manages; only `spring-chat-kotlin` needs it, from 0.1.2 |
 
 ## Use it
 
@@ -139,6 +139,55 @@ The paused reply is read from the conversation's session on the server, never fr
 
 A `ChatService` of your own streams `ChatReply`s from `reply(ChatRequest)` to take part: `ChatReply.Text`, `ChatReply.Confirmation` and `ChatReply.Ended`. `ChatService.stream` is all that a service has to implement otherwise.
 
+## Kotlin
+
+The Java API works from Kotlin as it is. A lambda is a `ChatPromptCustomizer` or a `ChatService`, `ChatRequest("id", "text")` has a `Principal?`, and a `when` over the sealed `ChatReply` needs no `else`. The nullness is JSpecify's, which Kotlin 2.1 and later read as strict: `ChatRequest("id", null)` does not compile. [`JavaApiFromKotlinTests`](spring-chat-kotlin/src/test/kotlin/io/github/hjosugi/springchat/JavaApiFromKotlinTests.kt) compiles each of these.
+
+```kotlin
+@Bean
+fun orderTools(orderTools: OrderTools) = ChatPromptCustomizer { prompt, _ -> prompt.tools(orderTools) }
+
+fun describe(reply: ChatReply): String = when (reply) {
+    is ChatReply.Text -> reply.delta
+    is ChatReply.Confirmation -> "waits for you to allow ${reply.calls.map { it.name }}"
+    is ChatReply.Ended -> "ended early: ${reply.reason}"
+}
+```
+
+`spring-chat-kotlin` adds what the Java API does not give Kotlin: the reply as a `Flow`, and its whole text from a suspend function. It comes with the next release, 0.1.2, and is not on Maven Central yet; `./mvnw install` puts it in your local Maven repository as `0.1.2-SNAPSHOT` until then.
+
+```xml
+<dependency>
+    <groupId>io.github.hjosugi</groupId>
+    <artifactId>spring-chat-kotlin</artifactId>
+    <version>0.1.2-SNAPSHOT</version> <!-- 0.1.2 once it is released -->
+</dependency>
+```
+
+```kotlin
+@RestController
+class AskController(private val chat: ChatService) {
+
+    // The reply as server-sent events, a piece of text for each event.
+    @GetMapping("/ask", produces = [MediaType.TEXT_EVENT_STREAM_VALUE])
+    fun ask(@RequestParam text: String): Flow<String> = chat.streamFlow(ChatRequest("ask", text))
+
+    // The whole reply, without a blocked thread.
+    @GetMapping("/answer")
+    suspend fun answer(@RequestParam text: String): String = chat.complete(ChatRequest("answer", text))
+}
+```
+
+They are extension functions of `ChatService`, in its package, so that they need no import:
+
+| | |
+| --- | --- |
+| `streamFlow(request): Flow<String>` | The pieces of text of `stream` |
+| `replyFlow(request): Flow<ChatReply>` | The `ChatReply`s of `reply`, to match with `when` |
+| `complete(request): String` | Suspends until the reply is written, and returns its text |
+
+A flow is cold: the service is asked when it is collected, once for each collection. Cancelling the collector, or the coroutine that waits in `complete`, cancels the reply's stream, as a stop does. An error of the service ends the collection with that error. `complete` returns the text and nothing else: where a reply paused for a confirmation or ended early, use `replyFlow`. [spring-chat-sample-kotlin](spring-chat-sample-kotlin) shows all of it.
+
 ## Conversations
 
 A conversation is a session of Spring AI. Without a session repository in the application they are kept in memory: they are lost when the application stops, and expire after `spring-chat.memory.time-to-live`. For conversations that outlast the application, or that several instances share, add Spring AI's JDBC session starter, and the chat uses its `SessionService` as it is:
@@ -187,7 +236,7 @@ The endpoints are open: anyone who can reach them can spend the model's tokens. 
 
 ```bash
 ./mvnw install
-./mvnw -pl spring-chat-sample-webmvc spring-boot:run    # or spring-chat-sample-webflux
+./mvnw -pl spring-chat-sample-webmvc spring-boot:run    # or spring-chat-sample-webflux, or spring-chat-sample-kotlin
 ```
 
 Open <http://localhost:8080>. The page has links for both transports and for the built-in page.
@@ -210,8 +259,10 @@ spring-chat-spring-boot-autoconfigure/  the code
   resources/templates/spring-chat/      the fragment and the built-in page
   resources/static/spring-chat/         the script that connects Deep Chat, and the styles
 spring-chat-spring-boot-starter/        dependencies only: the code, Thymeleaf and Deep Chat
+spring-chat-kotlin/                     Kotlin extensions: the reply as a Flow, and its text from a suspend function
 spring-chat-sample-webmvc/              the chat in a Spring MVC application
 spring-chat-sample-webflux/             the same in a WebFlux application
+spring-chat-sample-kotlin/              the same in a Kotlin WebFlux application, with coroutine endpoints
 ```
 
 Applications use `io.github.hjosugi.springchat` only; the packages below it may change between versions.
