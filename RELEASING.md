@@ -63,7 +63,7 @@ Then a release is the steps below up to 3, and the tag starts the workflow. The 
    /home/hsugi/ghq/github.com/hjosugi/spring-chat/scripts/publish-to-central.sh 0.1.0
    ```
 
-   `--dry-run` after the version does everything but the signing and the upload, with no key and no token. Run it in a terminal. The profile builds the jars of the sources and of the Javadoc, signs every file with your key, and uploads one bundle of `spring-chat-parent`, `spring-chat-spring-boot-autoconfigure` and `spring-chat-spring-boot-starter`. The samples are left out. The bundle waits in the portal: look at it there, and press Publish. A version on Central cannot be taken back.
+   `--dry-run` after the version does everything but the signing and the upload, with no key and no token. Run it in a terminal. The profile builds the jars of the sources and of the Javadoc, signs every file with your key, and uploads one bundle of `spring-chat-parent`, `spring-chat-spring-boot-autoconfigure`, `spring-chat-spring-boot-starter` and `spring-chat-kotlin`. The samples are left out. The bundle waits in the portal: look at it there, and press Publish. A version on Central cannot be taken back.
 5. Make the release on GitHub from the tag, with its notes.
 6. Set the next version, with `-SNAPSHOT`.
 
