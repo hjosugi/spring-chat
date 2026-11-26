@@ -49,6 +49,7 @@
     <modules>
         <module>spring-chat-spring-boot-autoconfigure</module>
         <module>spring-chat-spring-boot-starter</module>
+        <module>spring-chat-kotlin</module>
         <module>spring-chat-sample-webmvc</module>
         <module>spring-chat-sample-webflux</module>
     </modules>
@@ -79,6 +80,11 @@
                 <version>${project.version}</version>
             </dependency>
             <dependency>
+                <groupId>io.github.hjosugi</groupId>
+                <artifactId>spring-chat-kotlin</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
                 <groupId>org.webjars.npm</groupId>
                 <artifactId>deep-chat</artifactId>
                 <version>${deep-chat.version}</version>
@@ -87,6 +93,23 @@
     </dependencyManagement>
 
     <build>
+        <pluginManagement>
+            <plugins>
+                <!--
+                  Spring Boot's parent already manages this plugin: its version is kotlin.version, the Kotlin
+                  that Boot's BOM manages, and it has the compile and test-compile executions. A Kotlin module
+                  declares the plugin and its source directories. What is stated here is what the build relies
+                  on: the class files target the Java that the chat supports, as the Java modules do.
+                -->
+                <plugin>
+                    <groupId>org.jetbrains.kotlin</groupId>
+                    <artifactId>kotlin-maven-plugin</artifactId>
+                    <configuration>
+                        <jvmTarget>${java.version}</jvmTarget>
+                    </configuration>
+                </plugin>
+            </plugins>
+        </pluginManagement>
         <plugins>
             <!--
               The test classes run side by side; the tests inside one class still run one after
