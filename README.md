@@ -11,8 +11,6 @@ An AI chat for Spring Boot 4 and Thymeleaf. Add one dependency and a model, and 
 | --- | --- | --- | --- | --- |
 | 0.1 | 4.2 | 2.1 | 17 or later | 2.4, the version Spring Boot manages; only `spring-chat-kotlin` needs it, from 0.1.2 |
 
-Attachments, streaming progress and configurable page messages are in `0.1.2-SNAPSHOT`. To try them before the release, run `./mvnw install` and use that version of the starter.
-
 ## Use it
 
 Add the starter, a web stack and a model:
@@ -21,7 +19,7 @@ Add the starter, a web stack and a model:
 <dependency>
     <groupId>io.github.hjosugi</groupId>
     <artifactId>spring-chat-spring-boot-starter</artifactId>
-    <version>0.1.0</version>
+    <version>0.1.2</version>
 </dependency>
 <dependency>
     <groupId>org.springframework.boot</groupId>
@@ -36,7 +34,7 @@ Add the starter, a web stack and a model:
 The starter is on [Maven Central](https://central.sonatype.com/artifact/io.github.hjosugi/spring-chat-spring-boot-starter). With Gradle:
 
 ```kotlin
-implementation("io.github.hjosugi:spring-chat-spring-boot-starter:0.1.0")
+implementation("io.github.hjosugi:spring-chat-spring-boot-starter:0.1.2")
 ```
 
 Start the application and open <http://localhost:8080/chat>.
@@ -202,13 +200,13 @@ fun describe(reply: ChatReply): String = when (reply) {
 }
 ```
 
-`spring-chat-kotlin` adds what the Java API does not give Kotlin: the reply as a `Flow`, and its whole text from a suspend function. It comes with the next release, 0.1.2, and is not on Maven Central yet; `./mvnw install` puts it in your local Maven repository as `0.1.2-SNAPSHOT` until then.
+`spring-chat-kotlin` provides the reply as a `Flow` and the whole text of a reply from a suspend function.
 
 ```xml
 <dependency>
     <groupId>io.github.hjosugi</groupId>
     <artifactId>spring-chat-kotlin</artifactId>
-    <version>0.1.2-SNAPSHOT</version> <!-- 0.1.2 once it is released -->
+    <version>0.1.2</version>
 </dependency>
 ```
 
@@ -317,10 +315,10 @@ Applications use `io.github.hjosugi.springchat` only; the packages below it may 
 
 `./mvnw verify` runs the tests. The library's start a server on each web stack and talk to it over real SSE and WebSocket connections; the samples' do the same through Spring AI, with the demo model.
 
-To investigate an intermittent WebFlux SSE response that reaches `done` and then hangs, run the following with a JDK and Python 3 after the build. Each pair sends two turns on one HTTP/1.1 connection and reads through the final HTTP chunk. On a read timeout the script saves the partial reply, JVM thread dump and class histogram in the temporary directory it prints. [Issue #1](https://github.com/hjosugi/spring-chat/issues/1)
+To investigate an intermittent WebFlux SSE response that reaches `done` and then hangs, build the WebFlux sample from the revision under test and pass its executable jar to the script. The example uses 0.1.2 and needs a JDK and Python 3. Each pair sends two turns on one HTTP/1.1 connection and reads through the final HTTP chunk. On a read timeout the script saves the partial reply, JVM thread dump and class histogram in the temporary directory it prints. [Issue #1](https://github.com/hjosugi/spring-chat/issues/1)
 
 ```bash
-python3 scripts/check-webflux-sse.py spring-chat-sample-webflux/target/spring-chat-sample-webflux-0.1.2-SNAPSHOT.jar --clients 16 --pairs 125
+python3 scripts/check-webflux-sse.py spring-chat-sample-webflux/target/spring-chat-sample-webflux-0.1.2.jar --clients 16 --pairs 125
 ```
 
 ## License
