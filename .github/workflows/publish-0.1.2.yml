@@ -26,6 +26,7 @@ jobs:
           modules = ("spring-chat-parent", "spring-chat-spring-boot-autoconfigure",
                      "spring-chat-spring-boot-starter", "spring-chat-kotlin")
           expected = {f"pkg:maven/io.github.hjosugi/{module}@0.1.2" for module in modules}
+          expected.add("pkg:maven/io.github.hjosugi/spring-chat-parent@0.1.2?type=pom")
           credentials = os.environ["CENTRAL_TOKEN_USERNAME"] + ":" + os.environ["CENTRAL_TOKEN_PASSWORD"]
           headers = {
               "User-Agent": "spring-chat-release/0.1.2 (+https://github.com/hjosugi/spring-chat)",
