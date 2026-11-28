@@ -16,11 +16,17 @@ import org.jspecify.annotations.Nullable;
  * @param conversationId see {@link io.github.hjosugi.springchat.ChatRequest}
  * @param text see {@link io.github.hjosugi.springchat.ChatRequest}
  * @param decisions see {@link io.github.hjosugi.springchat.ChatRequest}
+ * @param attachments optional named files with base64 data
  */
 public record BrowserMessage(@Nullable String type, @Nullable String conversationId, @Nullable String text,
-		@Nullable List<Decision> decisions) {
+		@Nullable List<Decision> decisions, @Nullable List<Attachment> attachments) {
 
 	static final BrowserMessage EMPTY = new BrowserMessage(null, null, null, null);
+
+	public BrowserMessage(@Nullable String type, @Nullable String conversationId, @Nullable String text,
+			@Nullable List<Decision> decisions) {
+		this(type, conversationId, text, decisions, null);
+	}
 
 	public BrowserMessage(@Nullable String type, @Nullable String conversationId, @Nullable String text) {
 		this(type, conversationId, text, null);
@@ -37,6 +43,9 @@ public record BrowserMessage(@Nullable String type, @Nullable String conversatio
 	 * @param allow whether it may run
 	 */
 	public record Decision(@Nullable String id, boolean allow) {
+	}
+
+	public record Attachment(@Nullable String name, @Nullable String mediaType, @Nullable String data) {
 	}
 
 }

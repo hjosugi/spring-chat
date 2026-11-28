@@ -3,6 +3,7 @@ package io.github.hjosugi.springchat.web;
 import java.io.IOException;
 import java.security.Principal;
 import java.time.Duration;
+import java.util.Arrays;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Collectors;
@@ -61,12 +62,19 @@ class TestApplication {
 		 */
 		@Override
 		public Flux<ChatReply> reply(ChatRequest request) {
+			if (!request.attachments().isEmpty()) {
+				var media = request.attachments().get(0);
+				return Flux.just(new ChatReply.Text(media.getName() + " " + media.getMimeType() + " "
+						+ Arrays.hashCode(media.getDataAsByteArray())));
+			}
 			if (!request.decisions().isEmpty()) {
 				return Flux.just(new ChatReply.Text("decided: " + request.decisions().stream()
 					.map((decision) -> decision.id() + "=" + decision.allow())
 					.collect(Collectors.joining(",")) + " by " + ((request.principal() != null) ? request.principal().getName() : "nobody")));
 			}
 			return switch (request.text()) {
+				case "progress" -> Flux.just(new ChatReply.Reasoning("Looking"), new ChatReply.ToolCall("orders"),
+						new ChatReply.Text("found"), new ChatReply.Usage(7, 3, 10), new ChatReply.Ended(ChatReply.Reason.TRUNCATED));
 				case "pause" -> Flux.just(new ChatReply.Text("asking"), new ChatReply.Confirmation(
 						List.of(new ChatReply.PendingToolCall("call_1", "cancelOrder", "{\"orderId\":\"A-2\"}"))));
 				case "cut" -> Flux.just(new ChatReply.Text("long"), new ChatReply.Ended(ChatReply.Reason.TRUNCATED));

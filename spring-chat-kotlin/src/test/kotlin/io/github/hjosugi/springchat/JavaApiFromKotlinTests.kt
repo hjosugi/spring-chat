@@ -21,12 +21,15 @@ class JavaApiFromKotlinTests {
 
     /**
      * An expression `when` has to be exhaustive, so this compiles only if Kotlin knows the
-     * three subtypes of the sealed `ChatReply`: there is no `else`.
+     * subtypes of the sealed `ChatReply`: there is no `else`.
      */
     @Test
     fun whenOverTheSealedChatReplyNeedsNoElse() {
         fun describe(reply: ChatReply): String = when (reply) {
             is ChatReply.Text -> "text ${reply.delta}"
+            is ChatReply.Reasoning -> "reasoning ${reply.delta}"
+            is ChatReply.ToolCall -> "tool ${reply.name}"
+            is ChatReply.Usage -> "tokens ${reply.totalTokens}"
             is ChatReply.Confirmation -> "confirm ${reply.calls.map { it.name }}"
             is ChatReply.Ended -> "ended ${reply.reason}"
         }

@@ -6,6 +6,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
@@ -17,7 +19,13 @@ import org.springframework.ai.chat.messages.AssistantMessage;
 import org.springframework.ai.chat.messages.Message;
 import org.springframework.ai.chat.messages.ToolResponseMessage;
 import org.springframework.ai.chat.messages.UserMessage;
+import org.springframework.ai.chat.messages.part.OpaquePayload;
+import org.springframework.ai.chat.messages.part.ReasoningPart;
+import org.springframework.ai.chat.messages.part.StreamingParts;
+import org.springframework.ai.chat.messages.part.ToolCallPart;
 import org.springframework.ai.chat.metadata.ChatGenerationMetadata;
+import org.springframework.ai.chat.metadata.ChatResponseMetadata;
+import org.springframework.ai.chat.metadata.DefaultUsage;
 import org.springframework.ai.chat.model.ChatModel;
 import org.springframework.ai.chat.model.ChatResponse;
 import org.springframework.ai.chat.model.Generation;
@@ -80,9 +88,10 @@ class ChatClientChatServiceReplyTests {
 	void aToolThatNeedsConfirmationPausesTheReplyAndRunsNothing() {
 		List<ChatReply> reply = this.service.reply(says("Cancel A-2")).collectList().block();
 
-		assertThat(reply).hasSize(2);
+		assertThat(reply).hasSize(3);
 		assertThat(reply.get(0)).isEqualTo(new ChatReply.Text("Let me cancel that. "));
-		ChatReply.Confirmation confirmation = (ChatReply.Confirmation) reply.get(1);
+		assertThat(reply.get(1)).isEqualTo(new ChatReply.ToolCall("cancelOrder"));
+		ChatReply.Confirmation confirmation = (ChatReply.Confirmation) reply.get(2);
 		assertThat(confirmation.calls()).singleElement().satisfies((call) -> {
 			assertThat(call.name()).isEqualTo("cancelOrder");
 			assertThat(call.arguments()).contains("A-2");
@@ -105,7 +114,8 @@ class ChatClientChatServiceReplyTests {
 			.block();
 
 		assertThat(this.tools.cancelled).containsExactly("alice cancelled A-2");
-		assertThat(answer).containsExactly(new ChatReply.Text("Done: "), new ChatReply.Text("\"alice cancelled A-2\""));
+		assertThat(answer).containsExactly(new ChatReply.ToolCall("cancelOrder"), new ChatReply.Text("Done: "),
+				new ChatReply.Text("\"alice cancelled A-2\""));
 		// The session holds the whole turn: the question, the paused reply, the result and the answer.
 		assertThat(this.sessions.getActiveMessages(ChatClientChatService.sessionId(says(""))))
 			.extracting((message) -> message.getMessageType().name())
@@ -250,7 +260,28 @@ class ChatClientChatServiceReplyTests {
 	void aToolThatNeedsNoConfirmationRunsAtOnce() {
 		List<ChatReply> reply = this.service.reply(says("Where is A-1?")).collectList().block();
 
-		assertThat(reply).containsExactly(new ChatReply.Text("Done: "), new ChatReply.Text("\"A-1 is packed\""));
+		assertThat(reply).containsExactly(new ChatReply.ToolCall("orderStatus"), new ChatReply.Text("Done: "),
+				new ChatReply.Text("\"A-1 is packed\""));
+	}
+
+	@Test
+	void partialToolCallsAndTheirCompletedCallAnnounceTheToolOnce() {
+		this.tools.progressSeen = new CountDownLatch(1);
+		assertThat(this.service.reply(says("Stream the tool")).doOnNext((part) -> {
+			if (part instanceof ChatReply.ToolCall) {
+				this.tools.progressSeen.countDown();
+			}
+		}).collectList().block(Duration.ofSeconds(10)))
+			.containsExactly(new ChatReply.ToolCall("orderStatus"), new ChatReply.Text("Done: "),
+					new ChatReply.Text("\"A-1 is packed\""));
+	}
+
+	@Test
+	void reasoningAndTrailingUsageAreAvailableEvenWhenTheModelStopsEarly() {
+		assertThat(this.service.reply(says("Consider")).collectList().block())
+			.containsExactly(new ChatReply.Reasoning("Looking "), new ChatReply.Reasoning("it up"),
+					new ChatReply.Text("Found"), new ChatReply.Usage(7, 3, 10), new ChatReply.Ended(ChatReply.Reason.TRUNCATED));
+		assertThat(this.service.stream(says("Consider")).collectList().block()).containsExactly("Found");
 	}
 
 	@Test
@@ -307,6 +338,8 @@ class ChatClientChatServiceReplyTests {
 
 		final List<String> cancelled = new CopyOnWriteArrayList<>();
 
+		CountDownLatch progressSeen;
+
 		@Tool(description = "Cancels an order of the signed-in user", requiresConfirmation = true)
 		String cancelOrder(@ToolParam(description = "The order id") String orderId, ToolContext context) {
 			String result = context.getContext().get("user") + " cancelled " + orderId;
@@ -315,7 +348,10 @@ class ChatClientChatServiceReplyTests {
 		}
 
 		@Tool(description = "Tells where an order is")
-		String orderStatus(@ToolParam(description = "The order id") String orderId) {
+		String orderStatus(@ToolParam(description = "The order id") String orderId) throws InterruptedException {
+			if (this.progressSeen != null && !this.progressSeen.await(5, TimeUnit.SECONDS)) {
+				throw new IllegalStateException("Tool progress did not arrive while the tool was running");
+			}
 			return orderId + " is packed";
 		}
 
@@ -350,6 +386,21 @@ class ChatClientChatServiceReplyTests {
 				return text("stop", "Done: ", results.getResponses().get(0).responseData());
 			}
 			String said = ((UserMessage) last).getText();
+			if (said.equals("Consider")) {
+				var privatePart = new OpaquePayload("provider", "signature", "private");
+				return Flux.just(
+						chunk(AssistantMessage.builder().parts(List.of(ReasoningPart.of("Looking "))).build(), null),
+						chunk(AssistantMessage.builder().parts(List.of(new ReasoningPart(null, "it up", privatePart, Map.of()),
+								new ReasoningPart(null, null, privatePart, Map.of()))).build(), null),
+						chunk(new AssistantMessage("Found"), "max_tokens"),
+						new ChatResponse(List.of(), ChatResponseMetadata.builder().usage(new DefaultUsage(7, 3)).build()));
+			}
+			if (said.equals("Stream the tool")) {
+				var delta = ToolCallPart.of(new AssistantMessage.ToolCall("call_orderStatus", "function", "orderStatus", "{"));
+				var message = AssistantMessage.builder().parts(List.of(StreamingParts.partial(delta, 0))).build();
+				return Flux.just(chunk(message, null), chunk(message, null))
+					.concatWith(toolCall("orderStatus", "{\"orderId\":\"A-1\"}", ""));
+			}
 			if (said.contains("Never stop")) {
 				return Flux.concat(text(null, "and "), Flux.never()).doOnCancel(this.cancelled::incrementAndGet);
 			}

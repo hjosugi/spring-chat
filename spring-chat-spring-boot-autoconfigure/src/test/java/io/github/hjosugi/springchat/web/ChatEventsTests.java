@@ -4,6 +4,7 @@ import java.security.Principal;
 import java.time.Duration;
 import java.util.List;
 
+import io.github.hjosugi.springchat.AttachmentProperties;
 import io.github.hjosugi.springchat.ChatReply;
 import io.github.hjosugi.springchat.ChatRequest;
 import io.github.hjosugi.springchat.ToolDecision;
@@ -12,11 +13,37 @@ import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 import reactor.test.StepVerifier;
 
+import org.springframework.util.MimeTypeUtils;
+import org.springframework.util.unit.DataSize;
+
 import static org.assertj.core.api.Assertions.assertThat;
 
 class ChatEventsTests {
 
 	private static final BrowserMessage HI = new BrowserMessage("message", "c1", "hi");
+
+	@Test
+	void invalidAttachmentsNeverReachTheService() {
+		var limits = new AttachmentProperties(true, 1, DataSize.ofBytes(2), List.of(MimeTypeUtils.IMAGE_PNG));
+		var events = new ChatEvents((req) -> Flux.error(new AssertionError("asked")), 100, limits);
+		var file = new BrowserMessage.Attachment("photo.png", "image/png", "AQI=");
+		for (var files : List.of(List.of(file, file), List.of(new BrowserMessage.Attachment(null, "image/png", "AQ==")),
+				List.of(new BrowserMessage.Attachment("x", "image/png", "AQID")),
+				List.of(new BrowserMessage.Attachment("x", "image/png", "!")),
+				List.of(new BrowserMessage.Attachment("x", "image/*", "AQ==")),
+				List.of(new BrowserMessage.Attachment("x", "image/jpeg", "AQ==")))) {
+			rejects(events, new BrowserMessage(null, "c", "caption", null, files));
+		}
+		rejects(events, new BrowserMessage(null, "c", null, List.of(new BrowserMessage.Decision("1", true)), List.of(file)));
+		var disabled = new ChatEvents((req) -> Flux.error(new AssertionError("asked")), 100);
+		rejects(disabled, new BrowserMessage(null, "c", "caption", null, List.of(file)));
+	}
+
+	private static void rejects(ChatEvents events, BrowserMessage message) {
+		StepVerifier.create(events.stream(message, null)).expectNext(ChatEvent.start())
+			.expectNextMatches((event) -> event.type().equals(ChatEvent.ERROR))
+			.verifyComplete();
+	}
 
 	@Test
 	void aReplyIsStartThenTextThenDone() {

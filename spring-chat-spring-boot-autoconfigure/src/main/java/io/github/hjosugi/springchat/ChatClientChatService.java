@@ -20,10 +20,16 @@ import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.client.DefaultChatClient.DefaultChatClientRequestSpec;
 import org.springframework.ai.chat.messages.AssistantMessage;
 import org.springframework.ai.chat.messages.Message;
+import org.springframework.ai.chat.messages.UserMessage;
+import org.springframework.ai.chat.messages.part.MessagePart;
+import org.springframework.ai.chat.messages.part.ReasoningPart;
+import org.springframework.ai.chat.messages.part.TextPart;
 import org.springframework.ai.chat.metadata.FinishReasonCategory;
+import org.springframework.ai.chat.metadata.Usage;
 import org.springframework.ai.chat.model.ChatResponse;
 import org.springframework.ai.chat.model.Generation;
 import org.springframework.ai.chat.prompt.Prompt;
+import org.springframework.ai.content.Media;
 import org.springframework.ai.model.tool.ToolCallDecision;
 import org.springframework.ai.model.tool.ToolCallDecisions;
 import org.springframework.ai.model.tool.ToolCallingChatOptions;
@@ -33,8 +39,10 @@ import org.springframework.ai.session.SessionAttributes;
 import org.springframework.ai.session.SessionService;
 import org.springframework.ai.session.advisor.SessionAdvisors;
 import org.springframework.ai.session.advisor.SessionMemoryAdvisor;
+import org.springframework.ai.support.UsageCalculator;
 import org.springframework.ai.tool.ToolCallback;
 import org.springframework.ai.tool.ToolCallbackProvider;
+import org.springframework.util.StringUtils;
 
 /**
  * A {@link ChatService} that asks a {@link ChatClient}, the default one. Each
@@ -144,8 +152,18 @@ public class ChatClientChatService implements ChatService {
 	}
 
 	private Flux<ChatReply> turn(ChatRequest request) {
-		ChatClient.ChatClientRequestSpec prompt = prompt(request).user(request.text());
-		return replies(prompt.stream().chatResponse());
+		ChatClient.ChatClientRequestSpec prompt = prompt(request);
+		if (request.attachments().isEmpty() || StringUtils.hasText(request.text())) {
+			prompt.user(request.text());
+			if (!request.attachments().isEmpty()) {
+				prompt.user((user) -> user.media(request.attachments().toArray(Media[]::new)));
+			}
+		}
+		else {
+			// ChatClient's user spec requires text. A file-only turn is still a user message.
+			prompt.messages(UserMessage.builder().text(request.text()).media(request.attachments()).build());
+		}
+		return replies(prompt);
 	}
 
 	/**
@@ -166,41 +184,72 @@ public class ChatClientChatService implements ChatService {
 	 * {@code ChatResponse} and not as text, because text alone does not tell a reply that
 	 * paused, or that was cut, from one that is complete.
 	 */
-	private static Flux<ChatReply> replies(Flux<ChatResponse> chunks) {
-		return chunks.concatMapIterable(ChatClientChatService::replies);
+	private static Flux<ChatReply> replies(ChatClient.ChatClientRequestSpec prompt) {
+		prompt.advisors(new ToolProgressAdvisor());
+		ReplyChunks reply = new ReplyChunks();
+		return prompt.stream().chatResponse().concatMapIterable(reply::read).concatWith(Flux.defer(reply::finish));
 	}
 
-	private static List<ChatReply> replies(ChatResponse chunk) {
-		// The usage that follows the last round may come on a chunk without a generation.
-		Generation generation = chunk.getResult();
-		if (generation == null) {
-			return List.of();
+	private static final class ReplyChunks {
+
+		private ChatReply.@Nullable Usage usage;
+
+		private @Nullable ChatReply end;
+
+		List<ChatReply> read(ChatResponse chunk) {
+			if (chunk.getMetadata().get(ToolProgressAdvisor.TOOL_PROGRESS) instanceof ChatReply.ToolCall progress) {
+				return List.of(progress);
+			}
+			// A provider can put cumulative usage on a trailing chunk with no generation.
+			Usage tokens = chunk.getMetadata().getUsage();
+			if (!UsageCalculator.isEmpty(tokens)) {
+				this.usage = new ChatReply.Usage(tokens.getPromptTokens(), tokens.getCompletionTokens(), tokens.getTotalTokens());
+			}
+			Generation generation = chunk.getResult();
+			if (generation == null) {
+				return List.of();
+			}
+			AssistantMessage message = generation.getOutput();
+			List<ChatReply> replies = new ArrayList<>();
+			for (MessagePart part : message.getParts()) {
+				if (part instanceof TextPart text && !text.text().isEmpty()) {
+					replies.add(new ChatReply.Text(text.text()));
+				}
+				else if (part instanceof ReasoningPart reasoning) {
+					String delta = StringUtils.hasLength(reasoning.summary()) ? reasoning.summary() : reasoning.text();
+					if (StringUtils.hasLength(delta)) {
+						replies.add(new ChatReply.Reasoning(delta));
+					}
+				}
+			}
+			if (ToolCallDecisions.isAwaitingDecision(chunk)) {
+				this.end = confirmation(message);
+			}
+			else {
+				FinishReasonCategory category = generation.getMetadata().getFinishReasonCategory();
+				if (category == FinishReasonCategory.TRUNCATED) {
+					this.end = new ChatReply.Ended(ChatReply.Reason.TRUNCATED);
+				}
+				else if (category == FinishReasonCategory.FILTERED) {
+					this.end = new ChatReply.Ended(ChatReply.Reason.FILTERED);
+				}
+			}
+			return replies;
 		}
-		List<ChatReply> replies = new ArrayList<>();
-		AssistantMessage message = generation.getOutput();
-		String text = message.getText();
-		if (text != null && !text.isEmpty()) {
-			replies.add(new ChatReply.Text(text));
+
+		Flux<ChatReply> finish() {
+			return Flux.concat(Mono.justOrEmpty(this.usage), Mono.justOrEmpty(this.end));
 		}
-		if (ToolCallDecisions.isAwaitingDecision(chunk)) {
+
+		private static ChatReply.Confirmation confirmation(AssistantMessage message) {
 			List<String> keys = ToolCallDecisions.toolCallKeys(message);
 			List<AssistantMessage.ToolCall> calls = message.getToolCalls();
 			List<ChatReply.PendingToolCall> pending = new ArrayList<>();
 			for (int i = 0; i < calls.size(); i++) {
 				pending.add(new ChatReply.PendingToolCall(keys.get(i), calls.get(i).name(), calls.get(i).arguments()));
 			}
-			replies.add(new ChatReply.Confirmation(pending));
+			return new ChatReply.Confirmation(pending);
 		}
-		else {
-			FinishReasonCategory category = generation.getMetadata().getFinishReasonCategory();
-			if (category == FinishReasonCategory.TRUNCATED) {
-				replies.add(new ChatReply.Ended(ChatReply.Reason.TRUNCATED));
-			}
-			else if (category == FinishReasonCategory.FILTERED) {
-				replies.add(new ChatReply.Ended(ChatReply.Reason.FILTERED));
-			}
-		}
-		return replies;
 	}
 
 	private Flux<ChatReply> resume(ChatRequest request, String sessionId) {
@@ -209,10 +258,17 @@ public class ChatClientChatService implements ChatService {
 		ToolCallingChatOptions options = toolOptions(prompt);
 		ToolCallDecisions decisions = decisions(paused, request.decisions());
 		// A tool may block, so it must not run on a thread of the web server.
-		return Mono.fromCallable(() -> this.toolCallingManager.executeToolCalls(new Prompt(List.of(), options),
+		List<ChatReply.ToolCall> runningTools = new ArrayList<>();
+		for (int i = 0; i < decisions.decisions().size(); i++) {
+			if (decisions.decisions().get(i).allowed()) {
+				runningTools.add(new ChatReply.ToolCall(paused.getToolCalls().get(i).name()));
+			}
+		}
+		Flux<ChatReply> answer = Mono.fromCallable(() -> this.toolCallingManager.executeToolCalls(new Prompt(List.of(), options),
 				new ChatResponse(List.of(new Generation(paused))), decisions))
 			.subscribeOn(Schedulers.boundedElastic())
 			.flatMapMany((result) -> answer(prompt, result));
+		return Flux.concat(Flux.fromIterable(runningTools), answer);
 	}
 
 	private Flux<ChatReply> answer(ChatClient.ChatClientRequestSpec prompt, ToolExecutionResult result) {
@@ -226,7 +282,7 @@ public class ChatClientChatService implements ChatService {
 		List<Message> history = result.conversationHistory();
 		// Only the results: the session holds the user's message and the paused reply.
 		prompt.messages(history.get(history.size() - 1));
-		return replies(prompt.stream().chatResponse());
+		return replies(prompt);
 	}
 
 	/**

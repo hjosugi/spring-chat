@@ -35,27 +35,23 @@ public class ChatWebSocketHandler extends TextWebSocketHandler {
 
 	private final ChatEvents events;
 
-	private final int maxFrameLength;
+	private final ChatJson json;
 
-	/**
-	 * @param maxMessageLength the longest message, in characters, that must fit a frame
-	 */
-	public ChatWebSocketHandler(ChatEvents events, int maxMessageLength) {
+	public ChatWebSocketHandler(ChatEvents events, ChatJson json) {
 		this.events = events;
-		// As JSON a message is longer than its text: quotes and line breaks take two characters.
-		this.maxFrameLength = 2 * maxMessageLength + 1024;
+		this.json = json;
 	}
 
 	@Override
 	public void afterConnectionEstablished(WebSocketSession session) {
 		// The server's own limit, 8192 on Tomcat, is less than the default longest message.
-		session.setTextMessageSizeLimit(this.maxFrameLength);
+		session.setTextMessageSizeLimit(this.json.maxRequestBytes());
 		session.getAttributes().put(SEND, new ReentrantLock());
 	}
 
 	@Override
 	protected void handleTextMessage(WebSocketSession session, TextMessage frame) {
-		BrowserMessage message = ChatJson.read(frame.getPayload());
+		BrowserMessage message = this.json.read(frame.getPayload());
 		stopReply(session);
 		if (message.isStop()) {
 			return;
@@ -92,7 +88,7 @@ public class ChatWebSocketHandler extends TextWebSocketHandler {
 			if (session.getAttributes().get(REPLY) != reply || !session.isOpen()) {
 				return;
 			}
-			session.sendMessage(new TextMessage(ChatJson.write(event)));
+			session.sendMessage(new TextMessage(this.json.write(event)));
 		}
 		catch (IOException | IllegalStateException ex) {
 			// The browser has gone.

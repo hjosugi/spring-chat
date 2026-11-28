@@ -11,6 +11,8 @@ An AI chat for Spring Boot 4 and Thymeleaf. Add one dependency and a model, and 
 | --- | --- | --- | --- | --- |
 | 0.1 | 4.2 | 2.1 | 17 or later | 2.4, the version Spring Boot manages; only `spring-chat-kotlin` needs it, from 0.1.2 |
 
+Attachments, streaming progress and configurable page messages are in `0.1.2-SNAPSHOT`. To try them before the release, run `./mvnw install` and use that version of the starter.
+
 ## Use it
 
 Add the starter, a web stack and a model:
@@ -62,13 +64,13 @@ On Spring MVC, WebSocket also needs `spring-boot-starter-websocket`; without it 
 | | SSE | WebSocket |
 | --- | --- | --- |
 | Endpoint | `POST /chat/stream` | `/chat/ws` |
-| Browser sends | `{"conversationId", "text"}` as the request body | `{"type": "message", "conversationId", "text"}`, and `{"type": "stop"}` |
+| Browser sends | `conversationId`, `text` and optional `attachments` in a JSON body | The same JSON with `"type": "message"`, or `{"type": "stop"}` |
 | Decisions | `{"conversationId", "decisions": [{"id", "allow"}]}` as the request body | `{"type": "message", "conversationId", "decisions": [...]}` |
 | Stop | closes the request | sends `stop`; the connection stays |
 
-Both receive the same events, as JSON with a `type`: `start`, then `text` with a `delta` as the reply arrives and `ping` every 5 seconds while it is quiet, then one of:
+Both transports send a `start` event, followed by `text` events with a `delta` and periodic `ping` events. The stream can also carry `reasoning` with a displayable `delta`, or `tool` with the requested tool's `name`. The page shows these while waiting for the answer. A tool request can still require confirmation. Each reply has one final event.
 
-- `done`, with a `reason` if the model did not finish its reply: `truncated`, when it reached the longest reply it may write, or `filtered`, when the model or its provider stopped it.
+- `done` optionally includes the model's `usage` with `promptTokens`, `completionTokens` and `totalTokens`. A `reason` of `truncated` means the model reached its length limit. A `reason` of `filtered` means the model or its provider stopped the reply.
 - `confirm`, with the `calls` (`id`, `name`, `arguments`) that the model asked for and that the user has to allow. Nothing has run. See [Tools that need the user's confirmation](#tools-that-need-the-users-confirmation).
 - `error` with a `message`.
 
@@ -88,10 +90,53 @@ Both receive the same events, as JSON with a `type`: `start`, then `text` with a
 | `spring-chat.memory.max-messages` | `20` | How many of the latest messages a reply sees, a whole turn more at most; `0` for all |
 | `spring-chat.memory.time-to-live` | `24h` | How long a conversation is kept, when the application has no session repository of its own |
 | `spring-chat.max-message-length` | `8000` | Longest accepted message, in characters |
+| `spring-chat.attachments.enabled` | `false` | Allow files in user messages |
+| `spring-chat.attachments.max-count` | `4` | Maximum files in one message |
+| `spring-chat.attachments.max-size` | `1MB` | Maximum decoded size of each file |
+| `spring-chat.attachments.allowed-types` | `image/png,image/jpeg,application/pdf` | Allowed MIME types. Ranges such as `audio/*` are supported |
 
 As environment variables they are `SPRINGCHAT_PATH`, `SPRINGCHAT_TRANSPORT` and so on: Spring Boot drops the dash.
 
 The model is configured as Spring AI documents it, for example `spring.ai.anthropic.api-key`.
+
+### Attachments
+
+Enable `spring-chat.attachments.enabled` to show the file picker. The page offers a camera for allowed photo formats and a microphone when the browser's recording format is allowed. Choose MIME types your model accepts. A message can contain files alone or include a caption.
+
+```json
+{
+  "conversationId": "colors",
+  "text": "What color is this pixel?",
+  "attachments": [{
+    "name": "pixel.png",
+    "mediaType": "image/png",
+    "data": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAAAAAA6fptVAAAACklEQVR4nGNgAAAAAgABSK+kcQAAAABJRU5ErkJggg=="
+  }]
+}
+```
+
+Send the file bytes as base64 without a data URL prefix. Both transports validate the files before calling the service. The default service passes their names, types and bytes to Spring AI as user media. With memory enabled, later turns see the media kept with the original user message. Tool decisions travel in their own message.
+
+The starter sizes the chat's HTTP reader and its default Tomcat and Reactor Netty WebSocket handling for the configured limits, including base64 overhead. Applications with a custom WebSocket handshake set their own frame limit. A reverse proxy must also accept the resulting body or frame size.
+
+### Page messages
+
+Set the page’s own labels and status messages with `spring-chat.messages.*`. For example, these settings localize the buttons, the HTTP error and the tool status.
+
+```properties
+spring-chat.messages.allow=許可
+spring-chat.messages.deny=許可しない
+spring-chat.messages.refused=サーバーがメッセージを拒否しました（HTTP {status}）。
+spring-chat.messages.tool-call={name} を呼び出しています…
+```
+
+| Message keys | Where the page displays them |
+| --- | --- |
+| `interrupted`, `unreachable`, `refused` | A lost connection, an unreachable server, or an HTTP error. `refused` accepts `{status}` |
+| `truncated`, `filtered`, `empty` | The note below an incomplete or empty reply |
+| `confirm`, `allow`, `deny` | The introduction and buttons for tool confirmation |
+| `tool-call` | Tool progress. `{name}` is the requested tool |
+| `attachment-error` | A selected file exceeds the local limits or cannot be read |
 
 ## Change what answers
 
@@ -137,7 +182,7 @@ The chat ends the reply with a `confirm` event that lists the calls, and nothing
 
 The paused reply is read from the conversation's session on the server, never from the browser, so a browser cannot make up a tool call. A decision that comes from anyone but the user of the conversation, or that arrives a second time, or after the user wrote another message, runs nothing and ends with an error. The calls are shown as text: the model makes up their names and arguments.
 
-A `ChatService` of your own streams `ChatReply`s from `reply(ChatRequest)` to take part: `ChatReply.Text`, `ChatReply.Confirmation` and `ChatReply.Ended`. `ChatService.stream` is all that a service has to implement otherwise.
+A custom `ChatService` can emit `ChatReply.Reasoning` and `ChatReply.ToolCall` alongside `ChatReply.Text`. Emit `ChatReply.Usage` before completion or `ChatReply.Ended` to include token counts on `done`. Emit `ChatReply.Confirmation` to ask for a tool decision. A text-only service can implement just `ChatService.stream`.
 
 ## Kotlin
 
@@ -149,6 +194,9 @@ fun orderTools(orderTools: OrderTools) = ChatPromptCustomizer { prompt, _ -> pro
 
 fun describe(reply: ChatReply): String = when (reply) {
     is ChatReply.Text -> reply.delta
+    is ChatReply.Reasoning -> reply.delta
+    is ChatReply.ToolCall -> "requesting ${reply.name}"
+    is ChatReply.Usage -> "${reply.totalTokens} tokens"
     is ChatReply.Confirmation -> "waits for you to allow ${reply.calls.map { it.name }}"
     is ChatReply.Ended -> "ended early: ${reply.reason}"
 }
@@ -268,6 +316,12 @@ spring-chat-sample-kotlin/              the same in a Kotlin WebFlux application
 Applications use `io.github.hjosugi.springchat` only; the packages below it may change between versions.
 
 `./mvnw verify` runs the tests. The library's start a server on each web stack and talk to it over real SSE and WebSocket connections; the samples' do the same through Spring AI, with the demo model.
+
+To investigate an intermittent WebFlux SSE response that reaches `done` and then hangs, run the following with a JDK and Python 3 after the build. Each pair sends two turns on one HTTP/1.1 connection and reads through the final HTTP chunk. On a read timeout the script saves the partial reply, JVM thread dump and class histogram in the temporary directory it prints. [Issue #1](https://github.com/hjosugi/spring-chat/issues/1)
+
+```bash
+python3 scripts/check-webflux-sse.py spring-chat-sample-webflux/target/spring-chat-sample-webflux-0.1.2-SNAPSHOT.jar --clients 16 --pairs 125
+```
 
 ## License
 

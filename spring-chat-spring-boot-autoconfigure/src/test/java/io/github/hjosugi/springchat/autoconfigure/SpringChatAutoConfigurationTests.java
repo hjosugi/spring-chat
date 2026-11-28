@@ -110,8 +110,12 @@ class SpringChatAutoConfigurationTests {
 				assertThat(properties.transport()).isEqualTo(ChatTransport.WEBSOCKET);
 				assertThat(properties.streamPath()).isEqualTo("/assistant/stream");
 				assertThat(properties.socketPath()).isEqualTo("/assistant/ws");
-				assertThat(context.getBean("springChat", ChatView.class))
-					.isEqualTo(new ChatView("Chat", "websocket", "/assistant/stream", "/assistant/ws", null, "Message"));
+				ChatView view = context.getBean("springChat", ChatView.class);
+				assertThat(view).extracting(ChatView::title, ChatView::transport, ChatView::streamPath,
+						ChatView::socketPath, ChatView::intro, ChatView::placeholder)
+					.containsExactly("Chat", "websocket", "/assistant/stream", "/assistant/ws", null, "Message");
+				assertThat(view.attachments().enabled()).isFalse();
+				assertThat(view.messages().allow()).isEqualTo("Allow");
 				assertThat(context).doesNotHaveBean(ChatPageController.class);
 			});
 	}

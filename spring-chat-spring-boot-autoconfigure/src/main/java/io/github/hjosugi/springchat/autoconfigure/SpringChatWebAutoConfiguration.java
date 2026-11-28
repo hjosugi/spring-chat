@@ -1,8 +1,11 @@
 package io.github.hjosugi.springchat.autoconfigure;
 
+import io.github.hjosugi.springchat.AttachmentProperties;
+import io.github.hjosugi.springchat.ChatMessages;
 import io.github.hjosugi.springchat.ChatProperties;
 import io.github.hjosugi.springchat.ChatService;
 import io.github.hjosugi.springchat.web.ChatEvents;
+import io.github.hjosugi.springchat.web.ChatJson;
 import io.github.hjosugi.springchat.web.ChatPageController;
 import io.github.hjosugi.springchat.web.ChatStreamController;
 import io.github.hjosugi.springchat.web.ChatView;
@@ -13,6 +16,7 @@ import org.springframework.boot.autoconfigure.condition.ConditionalOnBooleanProp
 import org.springframework.boot.autoconfigure.condition.ConditionalOnClass;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnWebApplication;
+import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Import;
@@ -23,23 +27,24 @@ import org.springframework.context.annotation.ImportRuntimeHints;
  * or WebFlux: the SSE and WebSocket endpoints and, with Thymeleaf, the built-in page and
  * the bean the fragment reads.
  */
-@AutoConfiguration(after = SpringChatAutoConfiguration.class)
+@AutoConfiguration(after = SpringChatAutoConfiguration.class,
+		afterName = "org.springframework.boot.reactor.netty.autoconfigure.NettyReactiveWebServerAutoConfiguration")
 @ConditionalOnWebApplication
 @ConditionalOnBean(ChatService.class)
+@EnableConfigurationProperties({ AttachmentProperties.class, ChatMessages.class })
 @Import({ ServletChatConfiguration.class, ReactiveChatConfiguration.class })
 @ImportRuntimeHints(ChatRuntimeHints.class)
 public final class SpringChatWebAutoConfiguration {
 
 	@Bean
-	@ConditionalOnMissingBean
-	ChatEvents chatEvents(ChatService chatService, ChatProperties properties) {
-		return new ChatEvents(chatService, properties.maxMessageLength());
+	ChatJson chatJson(ChatProperties properties, AttachmentProperties attachments) {
+		return new ChatJson(attachments.maxRequestBytes(properties.maxMessageLength()));
 	}
 
 	@Bean
 	@ConditionalOnMissingBean
-	ChatStreamController chatStreamController(ChatEvents events) {
-		return new ChatStreamController(events);
+	ChatEvents chatEvents(ChatService chatService, ChatProperties properties, AttachmentProperties attachments) {
+		return new ChatEvents(chatService, properties.maxMessageLength(), attachments);
 	}
 
 	/**
@@ -62,8 +67,8 @@ public final class SpringChatWebAutoConfiguration {
 		 * Templates read this bean by its name, as {@code ${@springChat.transport}}.
 		 */
 		@Bean
-		ChatView springChat(ChatProperties properties) {
-			return ChatView.of(properties);
+		ChatView springChat(ChatProperties properties, AttachmentProperties attachments, ChatMessages messages) {
+			return ChatView.of(properties, attachments, messages);
 		}
 
 		@Bean

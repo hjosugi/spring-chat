@@ -3,7 +3,10 @@ package io.github.hjosugi.springchat.autoconfigure;
 import io.github.hjosugi.springchat.ChatProperties;
 import io.github.hjosugi.springchat.ChatTransport;
 import io.github.hjosugi.springchat.web.ChatEvents;
+import io.github.hjosugi.springchat.web.ChatJson;
+import io.github.hjosugi.springchat.web.ChatStreamController;
 import io.github.hjosugi.springchat.web.servlet.ChatWebSocketHandler;
+import io.github.hjosugi.springchat.web.servlet.ServletChatStreamController;
 
 import org.springframework.boot.autoconfigure.condition.ConditionalOnClass;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
@@ -25,6 +28,12 @@ import org.springframework.web.socket.config.annotation.WebSocketConfigurer;
 class ServletChatConfiguration {
 
 	@Bean
+	@ConditionalOnMissingBean(ChatStreamController.class)
+	ServletChatStreamController chatStreamController(ChatEvents events, ChatJson json) {
+		return new ServletChatStreamController(events, json);
+	}
+
+	@Bean
 	WebMvcConfigurer chatWebMvcConfigurer(ChatProperties properties) {
 		return new WebMvcConfigurer() {
 
@@ -43,8 +52,8 @@ class ServletChatConfiguration {
 
 		@Bean
 		@ConditionalOnMissingBean
-		ChatWebSocketHandler chatWebSocketHandler(ChatEvents events, ChatProperties properties) {
-			return new ChatWebSocketHandler(events, properties.maxMessageLength());
+		ChatWebSocketHandler chatWebSocketHandler(ChatEvents events, ChatJson json) {
+			return new ChatWebSocketHandler(events, json);
 		}
 
 		// Without allowed origins, only pages of this application may connect.

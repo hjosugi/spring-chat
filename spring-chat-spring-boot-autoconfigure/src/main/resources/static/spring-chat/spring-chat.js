@@ -1,32 +1,21 @@
 // Connects each <deep-chat class="spring-chat"> to the server, over SSE or WebSocket.
-// Both carry the same events: start, then text (with a delta) and ping, then done, confirm or error.
+// Both carry text, reasoning and tool progress between start and done, confirm or error.
 // A confirm ends a reply that waits for the user to allow tool calls; the buttons it shows
 // answer with a message that has decisions in place of a text.
-
-const INTERRUPTED = 'The connection was lost before the reply finished.';
-const UNREACHABLE = 'The chat server could not be reached.';
-const refused = (status) => `The chat server refused the message (HTTP ${status}).`;
-const REASONS = {
-  truncated: 'The reply was cut: it reached the longest length that the model may write.',
-  filtered: 'The model stopped the reply.',
-};
-// A model can end a reply without a word: Anthropic refuses that way.
-const EMPTY = 'The model gave no answer.';
-const LABELS = { intro: 'The assistant wants to run:', allow: 'Allow', deny: 'Do not allow' };
 
 // The tool calls are the model's own words: they are text, never markup.
 function escapeHtml(text) {
   return String(text).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 }
 
-function confirmHtml(calls) {
+function confirmHtml(calls, labels) {
   const items = calls
     .map((call) => `<li><code>${escapeHtml(call.name)}</code> <code>${escapeHtml(call.arguments)}</code></li>`)
     .join('');
   return (
-    `<div class="spring-chat-confirm"><p>${LABELS.intro}</p><ul>${items}</ul>` +
-    `<button class="spring-chat-allow">${LABELS.allow}</button> ` +
-    `<button class="spring-chat-deny">${LABELS.deny}</button></div>`
+    `<div class="spring-chat-confirm"><p>${escapeHtml(labels.confirm)}</p><ul>${items}</ul>` +
+    `<button class="spring-chat-allow">${escapeHtml(labels.allow)}</button> ` +
+    `<button class="spring-chat-deny">${escapeHtml(labels.deny)}</button></div>`
   );
 }
 
@@ -51,9 +40,9 @@ function sseTransport(data) {
         signal,
       });
     } catch {
-      return reply.fail(UNREACHABLE);
+      return reply.fail(data.unreachable);
     }
-    if (!response.ok) return reply.fail(refused(response.status));
+    if (!response.ok) return reply.fail(data.refused.replaceAll('{status}', String(response.status)));
 
     try {
       const reader = response.body.pipeThrough(new TextDecoderStream()).getReader();
@@ -72,7 +61,7 @@ function sseTransport(data) {
     } catch {
       // The stream broke; so did one that ended without done or error.
     }
-    reply.fail(INTERRUPTED);
+    reply.fail(data.interrupted);
   }
 
   return (message, reply) => {
@@ -102,7 +91,7 @@ function socketTransport(data) {
       opening.onclose = () => {
         if (socket !== opening) return reject(new Error('never opened'));
         socket = null;
-        current?.fail(INTERRUPTED);
+        current?.fail(data.interrupted);
       };
     }).finally(() => {
       connecting = null;
@@ -117,7 +106,7 @@ function socketTransport(data) {
       .then((open) => {
         if (!stopped) open.send(JSON.stringify({ type: 'message', ...message }));
       })
-      .catch(() => reply.fail(UNREACHABLE));
+      .catch(() => reply.fail(data.unreachable));
 
     return () => {
       stopped = true;
@@ -133,6 +122,33 @@ function newConversationId() {
   return Array.from(crypto.getRandomValues(new Uint8Array(16)), (byte) => byte.toString(16).padStart(2, '0')).join('');
 }
 
+function readAttachment(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve({
+      name: file.name,
+      mediaType: file.type || 'application/octet-stream',
+      data: reader.result.slice(reader.result.lastIndexOf(',') + 1),
+    });
+    reader.onerror = () => reject(reader.error);
+    reader.readAsDataURL(file);
+  });
+}
+
+async function userMessage(body, data) {
+  if (!(body instanceof FormData)) return { text: body.messages.at(-1).text };
+  // Deep Chat sends the current files separately. A file-only turn has no message1.
+  const files = body.getAll('files');
+  if (data.attachments !== 'true' || files.length > Number(data.maxFiles)
+      || files.some((file) => !file.size || file.size > Number(data.maxFileSize))) {
+    throw new Error(data.attachmentError);
+  }
+  return {
+    text: JSON.parse(body.get('message1') ?? '{}').text ?? '',
+    attachments: await Promise.all(files.map(readAttachment)),
+  };
+}
+
 function configure(chat) {
   const data = chat.dataset;
   const conversationId = newConversationId();
@@ -145,20 +161,44 @@ function configure(chat) {
     if (!pending) return;
     decisions = pending.map((call) => ({ id: call.id, allow }));
     pending = null;
-    chat.submitUserMessage({ text: allow ? LABELS.allow : LABELS.deny });
+    chat.submitUserMessage({ text: allow ? data.allow : data.deny });
   }
 
+  if (data.attachments === 'true') {
+    const files = { maxNumberOfFiles: Number(data.maxFiles), acceptedFormats: data.acceptedTypes };
+    chat.mixedFiles = { files };
+    const types = data.acceptedTypes.toLowerCase().split(',');
+    const accepts = (type) => types.includes(type) || types.includes(type.split('/')[0] + '/*') || types.includes('*/*');
+    const photo = ['image/png', 'image/jpeg'].find(accepts);
+    if (photo) chat.camera = { files: { ...files, format: photo.split('/')[1] } };
+    const audio = ['audio/webm', 'audio/mp4'].find((type) => globalThis.MediaRecorder?.isTypeSupported(type));
+    if (audio && accepts(audio)) chat.microphone = { files: { ...files, format: audio.split('/')[1] } };
+  }
+  chat.requestBodyLimits = { maxMessages: 1 };
+  // Deep Chat supplies toggle when the component initializes.
+  chat.displayLoadingBubble = { toggle() {} };
   chat.connect = {
     stream: true,
-    handler: (body, signals) => {
+    handler: async (body, signals) => {
       let started = false;
       let open = true;
       let answered = false; // whether the reply has any text
+      let loading = true;
+      let reasoning = '';
       // deep-chat renders a text asynchronously, so what follows one waits for it:
       // otherwise the end of a reply could overtake its last words.
       let rendered = Promise.resolve();
       const afterRendering = (action) => {
         rendered = rendered.then(action).catch(() => {});
+      };
+      const showProgress = (text) => afterRendering(() => {
+        if (!open) return;
+        loading = true;
+        chat.displayLoadingBubble.toggle({ style: { html: `<span role="status">${escapeHtml(text)}</span>` } });
+      });
+      const hideProgress = () => {
+        if (loading) chat.displayLoadingBubble.toggle();
+        loading = false;
       };
       const reply = {
         event(event) {
@@ -168,7 +208,19 @@ function configure(chat) {
           else if (!started) return;
           else if (event.type === 'text') {
             answered = true;
-            afterRendering(() => signals.onResponse({ text: event.delta }));
+            reasoning = '';
+            afterRendering(() => {
+              hideProgress();
+              return signals.onResponse({ text: event.delta });
+            });
+          }
+          else if (event.type === 'reasoning') {
+            reasoning += event.delta;
+            showProgress(reasoning);
+          }
+          else if (event.type === 'tool') {
+            reasoning = '';
+            showProgress(data.toolCall.replaceAll('{name}', () => event.name));
           }
           else if (event.type === 'done') reply.close(event.reason);
           else if (event.type === 'confirm') reply.confirm(event.calls);
@@ -179,6 +231,7 @@ function configure(chat) {
           open = false;
           afterRendering(() => {
             // Not signals.onResponse({ error }): deep-chat throws on it when no text has arrived yet.
+            if (answered) hideProgress();
             signals.onClose();
             chat.addMessage({ error: message });
           });
@@ -187,8 +240,10 @@ function configure(chat) {
           if (!open) return;
           open = false;
           afterRendering(() => {
+            if (answered && reason !== 'stopped') hideProgress();
             signals.onClose();
-            const note = REASONS[reason] ?? (answered || reason === 'stopped' ? null : EMPTY);
+            const note = reason === 'truncated' || reason === 'filtered' ? data[reason]
+              : (answered || reason === 'stopped' ? null : data.empty);
             if (note) chat.addMessage({ error: note });
           });
         },
@@ -196,24 +251,32 @@ function configure(chat) {
           if (!open) return;
           open = false;
           afterRendering(() => {
+            if (answered) hideProgress();
             signals.onClose();
             pending = calls;
-            chat.addMessage({ html: confirmHtml(calls) });
+            chat.addMessage({ html: confirmHtml(calls, data) });
           });
         },
       };
 
       signals.onOpen();
+      chat.displayLoadingBubble.toggle({});
       // Typing another message instead of pressing a button leaves the calls unanswered.
       const answer = decisions;
       decisions = null;
       if (!answer) pending = null;
-      const stop = transport(answer ? { conversationId, decisions: answer } : { conversationId, text: body.messages.at(-1).text }, reply);
+      let stop;
       signals.stopClicked.listener = () => {
         // Closed first, so that what stopping sets off cannot be taken for a failure.
         reply.close('stopped');
-        stop();
+        stop?.();
       };
+      try {
+        const message = answer ? { decisions: answer } : await userMessage(body, data);
+        if (open) stop = transport({ conversationId, ...message }, reply);
+      } catch {
+        reply.fail(data.attachmentError);
+      }
     },
   };
 

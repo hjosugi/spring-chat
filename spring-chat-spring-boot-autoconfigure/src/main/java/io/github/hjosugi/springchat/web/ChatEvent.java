@@ -2,11 +2,13 @@ package io.github.hjosugi.springchat.web;
 
 import java.util.List;
 
+import io.github.hjosugi.springchat.ChatReply;
 import org.jspecify.annotations.Nullable;
 
 /**
  * What the server sends during a reply, over SSE and WebSocket alike: {@code start},
- * then {@code text} as the reply arrives and {@code ping} while it is quiet, then
+ * then {@code text}, {@code reasoning} and {@code tool} as the reply arrives,
+ * {@code ping} while it is quiet, then
  * {@code done}, {@code confirm} or {@code error}.
  * <p>
  * {@code confirm} ends a reply that paused: the model asked for tool calls that the
@@ -19,13 +21,19 @@ import org.jspecify.annotations.Nullable;
  * @param reason {@code truncated} or {@code filtered}, for a {@code done} that is not
  * the model's end
  * @param calls the tool calls that wait for a decision, for {@code confirm}
+ * @param name the tool being requested, for {@code tool}
+ * @param usage the model's reported token counts, for {@code done}
  */
 public record ChatEvent(String type, @Nullable String delta, @Nullable String message, @Nullable String reason,
-		@Nullable List<Call> calls) {
+		@Nullable List<Call> calls, @Nullable String name, ChatReply.@Nullable Usage usage) {
 
 	public static final String START = "start";
 
 	public static final String TEXT = "text";
+
+	public static final String REASONING = "reasoning";
+
+	public static final String TOOL = "tool";
 
 	public static final String PING = "ping";
 
@@ -36,19 +44,27 @@ public record ChatEvent(String type, @Nullable String delta, @Nullable String me
 	public static final String CONFIRM = "confirm";
 
 	public static ChatEvent start() {
-		return new ChatEvent(START, null, null, null, null);
+		return new ChatEvent(START, null, null, null, null, null, null);
 	}
 
 	public static ChatEvent text(String delta) {
-		return new ChatEvent(TEXT, delta, null, null, null);
+		return new ChatEvent(TEXT, delta, null, null, null, null, null);
+	}
+
+	public static ChatEvent reasoning(String delta) {
+		return new ChatEvent(REASONING, delta, null, null, null, null, null);
+	}
+
+	public static ChatEvent tool(String name) {
+		return new ChatEvent(TOOL, null, null, null, null, name, null);
 	}
 
 	public static ChatEvent ping() {
-		return new ChatEvent(PING, null, null, null, null);
+		return new ChatEvent(PING, null, null, null, null, null, null);
 	}
 
 	public static ChatEvent done() {
-		return new ChatEvent(DONE, null, null, null, null);
+		return done(null, null);
 	}
 
 	/**
@@ -56,18 +72,22 @@ public record ChatEvent(String type, @Nullable String delta, @Nullable String me
 	 * @param reason {@code truncated} or {@code filtered}
 	 */
 	public static ChatEvent done(String reason) {
-		return new ChatEvent(DONE, null, null, reason, null);
+		return done(reason, null);
+	}
+
+	public static ChatEvent done(@Nullable String reason, ChatReply.@Nullable Usage usage) {
+		return new ChatEvent(DONE, null, null, reason, null, null, usage);
 	}
 
 	/**
 	 * The end of a reply that waits for the user to allow tool calls.
 	 */
 	public static ChatEvent confirm(List<Call> calls) {
-		return new ChatEvent(CONFIRM, null, null, null, calls);
+		return new ChatEvent(CONFIRM, null, null, null, calls, null, null);
 	}
 
 	public static ChatEvent error(String message) {
-		return new ChatEvent(ERROR, null, message, null, null);
+		return new ChatEvent(ERROR, null, message, null, null, null, null);
 	}
 
 	/**

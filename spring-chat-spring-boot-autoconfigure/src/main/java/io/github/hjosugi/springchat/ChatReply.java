@@ -4,9 +4,8 @@ import java.util.List;
 import java.util.Objects;
 
 /**
- * A piece of a reply, as the {@link ChatService} streams it: the text as it arrives, a
- * tool call that waits for the user's decision, or the reason why the reply ended
- * before its end.
+ * A piece of a reply as the {@link ChatService} streams its text, progress, usage
+ * and outcome.
  */
 public sealed interface ChatReply {
 
@@ -21,6 +20,24 @@ public sealed interface ChatReply {
 			Objects.requireNonNull(delta, "delta");
 		}
 
+	}
+
+	/** A piece of the provider's displayable reasoning or reasoning summary. */
+	record Reasoning(String delta) implements ChatReply {
+		public Reasoning {
+			Objects.requireNonNull(delta, "delta");
+		}
+	}
+
+	/** The model requested this tool. A confirmation may still be needed. */
+	record ToolCall(String name) implements ChatReply {
+		public ToolCall {
+			Objects.requireNonNull(name, "name");
+		}
+	}
+
+	/** Token counts reported by the model for this reply, including its tool rounds. */
+	record Usage(int promptTokens, int completionTokens, int totalTokens) implements ChatReply {
 	}
 
 	/**

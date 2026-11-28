@@ -50,6 +50,9 @@ class AskController(private val chat: ChatService) {
  */
 internal fun ChatReply.describe(): String = when (this) {
     is ChatReply.Text -> delta
+    is ChatReply.Reasoning -> "\n[reasoning: $delta]"
+    is ChatReply.ToolCall -> "\n[tool: $name]"
+    is ChatReply.Usage -> "\n[tokens: $totalTokens]"
     is ChatReply.Confirmation -> "\n[waits for you to allow: ${calls.joinToString { it.name }}]"
     is ChatReply.Ended -> "\n[ended early: ${reason.name.lowercase()}]"
 }

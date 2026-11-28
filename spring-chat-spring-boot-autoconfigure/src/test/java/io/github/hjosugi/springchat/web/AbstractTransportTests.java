@@ -57,6 +57,24 @@ abstract class AbstractTransportTests {
 	}
 
 	@Test
+	void bothTransportsCarryProgressAndUsageOnTheLastEvent() throws Exception {
+		List<String> expected = List.of(START, "{\"type\":\"reasoning\",\"delta\":\"Looking\"}",
+				"{\"type\":\"tool\",\"name\":\"orders\"}", text("found"),
+				"{\"type\":\"done\",\"reason\":\"truncated\",\"usage\":{\"promptTokens\":7,\"completionTokens\":3,\"totalTokens\":10}}");
+		assertThat(post(message("progress")).body().lines().filter((line) -> line.startsWith("data:"))
+			.map((line) -> line.substring(5))).containsExactlyElementsOf(expected);
+		SocketFrames frames = new SocketFrames();
+		WebSocket socket = connect(frames, null);
+		try {
+			socket.sendText(message("progress"), true).join();
+			assertThat(frames.through(expected.get(expected.size() - 1))).containsExactlyElementsOf(expected);
+		}
+		finally {
+			socket.abort();
+		}
+	}
+
+	@Test
 	void sseStreamsTheReply() throws Exception {
 		HttpResponse<String> response = post(message("hello"));
 

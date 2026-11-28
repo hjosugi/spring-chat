@@ -20,8 +20,11 @@ public class ChatWebSocketHandler implements WebSocketHandler {
 
 	private final ChatEvents events;
 
-	public ChatWebSocketHandler(ChatEvents events) {
+	private final ChatJson json;
+
+	public ChatWebSocketHandler(ChatEvents events, ChatJson json) {
 		this.events = events;
+		this.json = json;
 	}
 
 	@Override
@@ -38,10 +41,10 @@ public class ChatWebSocketHandler implements WebSocketHandler {
 		return session.receive()
 			// A pong, say, is not a message and must not end the running reply.
 			.filter((frame) -> frame.getType() == WebSocketMessage.Type.TEXT)
-			.map((frame) -> ChatJson.read(frame.getPayloadAsText()))
+			.map((frame) -> this.json.read(frame.getPayloadAsText()))
 			.switchMap((message) -> message.isStop() ? Flux.empty()
 					: this.events.stream(message, principal.orElse(null)))
-			.map((event) -> session.textMessage(ChatJson.write(event)));
+			.map((event) -> session.textMessage(this.json.write(event)));
 	}
 
 }

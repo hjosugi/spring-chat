@@ -17,7 +17,7 @@ import org.springframework.boot.test.context.SpringBootTest.WebEnvironment;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-@SpringBootTest(webEnvironment = WebEnvironment.RANDOM_PORT)
+@SpringBootTest(webEnvironment = WebEnvironment.RANDOM_PORT, properties = "spring-chat.attachments.enabled=true")
 class SampleApplicationTests {
 
 	private final HttpClient http = HttpClient.newHttpClient();
@@ -55,6 +55,25 @@ class SampleApplicationTests {
 				{"conversationId": "sse-3", "text": " "}""");
 
 		assertThat(response.body()).contains("event:error").doesNotContain("event:text");
+	}
+
+	@Test
+	void theAutoConfiguredNettyServerAcceptsAFileLargerThanItsDefaultFrame() throws Exception {
+		Frames frames = new Frames();
+		WebSocket socket = this.http.newWebSocketBuilder()
+			.buildAsync(URI.create("ws://localhost:" + this.port + "/chat/ws"), frames)
+			.get(10, TimeUnit.SECONDS);
+		try {
+			String body = """
+					{"type":"message","conversationId":"photo","text":"picture",
+					 "attachments":[{"name":"photo.png","mediaType":"image/png","data":"%s"}]}"""
+				.formatted("AQID".repeat(32 * 1024));
+			socket.sendText(body, true).join();
+			assertThat(frames.done.get(10, TimeUnit.SECONDS)).contains("**picture**");
+		}
+		finally {
+			socket.abort();
+		}
 	}
 
 	@Test

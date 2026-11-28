@@ -14,6 +14,7 @@ import org.springframework.ai.chat.model.ChatModel;
 import org.springframework.ai.chat.model.ChatResponse;
 import org.springframework.ai.chat.model.Generation;
 import org.springframework.ai.chat.prompt.Prompt;
+import org.springframework.ai.content.Media;
 import org.springframework.ai.session.DefaultSessionService;
 import org.springframework.ai.session.EventFilter;
 import org.springframework.ai.session.InMemorySessionRepository;
@@ -21,6 +22,7 @@ import org.springframework.ai.session.Session;
 import org.springframework.ai.session.SessionAttributes;
 import org.springframework.ai.session.SessionService;
 import org.springframework.ai.session.advisor.SessionAdvisors;
+import org.springframework.util.MimeTypeUtils;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -32,6 +34,34 @@ class ChatClientChatServiceTests {
 
 	private final ChatClientChatService service = new ChatClientChatService(
 			ChatClient.builder(new EchoChatModel()).defaultAdvisors(SessionAdvisors.builder(this.sessions).build()).build());
+
+	@Test
+	void mediaWithOrWithoutTextReachesTheModelAndStaysWithItsUserMessage() {
+		byte[] bytes = { 1, 2, 3 };
+		Media image = Media.builder().name("photo.png").mimeType(MimeTypeUtils.IMAGE_PNG).data(bytes).build();
+		List<Prompt> prompts = new ArrayList<>();
+		var client = ChatClient.builder(new EchoChatModel() {
+			@Override
+			public Flux<ChatResponse> stream(Prompt prompt) {
+				prompts.add(prompt);
+				return super.stream(prompt);
+			}
+		}).defaultAdvisors(SessionAdvisors.builder(this.sessions).build()).build();
+		var service = new ChatClientChatService(client);
+		for (String text : List.of("", "look")) {
+			service.reply(new ChatRequest("media", text, null, List.of(), List.of(image))).blockLast();
+			UserMessage user = prompts.get(prompts.size() - 1).getUserMessage();
+			assertThat(user.getText()).isEqualTo(text);
+			assertThat(user.getMedia()).singleElement().satisfies((file) -> {
+				assertThat(file.getName()).isEqualTo("photo.png");
+				assertThat(file.getMimeType()).isEqualTo(MimeTypeUtils.IMAGE_PNG);
+				assertThat(file.getDataAsByteArray()).containsExactly(bytes);
+			});
+		}
+		service.reply(new ChatRequest("media", "again")).blockLast();
+		assertThat(prompts.get(2).getInstructions()).filteredOn(UserMessage.class::isInstance)
+			.map((message) -> ((UserMessage) message).getMedia()).containsExactly(List.of(image), List.of(image), List.of());
+	}
 
 	@Test
 	void streamsTheModelsReplyAndRemembersTheConversation() {
@@ -141,7 +171,7 @@ class ChatClientChatServiceTests {
 	/**
 	 * Answers with the number of user messages it was given, then the last one.
 	 */
-	private static final class EchoChatModel implements ChatModel {
+	private static class EchoChatModel implements ChatModel {
 
 		@Override
 		public ChatResponse call(Prompt prompt) {

@@ -44,7 +44,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  */
 @SpringBootTest(webEnvironment = WebEnvironment.RANDOM_PORT,
 		properties = { "spring.ai.model.chat=anthropic", "spring.ai.anthropic.api-key=test-key",
-				"spring.ai.anthropic.max-retries=0" })
+				"spring.ai.anthropic.max-retries=0", "spring-chat.attachments.enabled=true" })
 class AnthropicModelTests {
 
 	private static final Pattern TOOL_RESULT = Pattern.compile("order [^\"\\\\]+ has shipped");
@@ -100,8 +100,24 @@ class AnthropicModelTests {
 
 		assertThat(reply).startsWith("event:start")
 			.contains("\"delta\":\"Hello\"", "\"delta\":\" \"", "\"delta\":\"world\"")
-			.contains("event:done")
+			.contains("event:done", "\"usage\":{\"promptTokens\":25,\"completionTokens\":15,\"totalTokens\":40}")
 			.doesNotContain("event:error");
+	}
+
+	@Test
+	void anImageReachesTheProviderAndIsReplayedOnTheNextTurn() throws Exception {
+		String data = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAAAAAA6fptVAAAACklEQVR4nGNgAAAAAgABSK+kcQAAAABJRU5ErkJggg==";
+		post(Map.of("conversationId", "photo-1", "attachments",
+				List.of(Map.of("name", "pixel.png", "mediaType", "image/png", "data", data))));
+		post("photo-1", "What color was it?");
+		assertThat(anthropic.requests).hasSize(2).allSatisfy((request) -> {
+			JsonNode parts = request.body().get("messages").get(0).get("content");
+			assertThat(parts).anySatisfy((part) -> {
+				assertThat(part.path("type").asString()).isEqualTo("image");
+				assertThat(part.path("source").path("media_type").asString()).isEqualTo("image/png");
+				assertThat(part.path("source").path("data").asString()).isEqualTo(data);
+			});
+		});
 	}
 
 	@Test
@@ -149,7 +165,9 @@ class AnthropicModelTests {
 		assertThat(requests).hasSize(2);
 		assertThat(requests.get(0).body().get("tools").toString()).contains("orderStatus", "orderId");
 		assertThat(requests.get(1).body().toString()).contains("tool_result", "order A-1 of tool-1 has shipped");
-		assertThat(reply).contains("\"delta\":\"order A-1 of tool-1 has shipped\"", "event:done")
+		assertThat(reply).containsOnlyOnce("\"type\":\"tool\",\"name\":\"orderStatus\"")
+			.contains("\"delta\":\"order A-1 of tool-1 has shipped\"", "event:done",
+					"\"usage\":{\"promptTokens\":50,\"completionTokens\":30,\"totalTokens\":80}")
 			.doesNotContain("event:error");
 		// A tool may block, so it must not run on a thread of the web server.
 		// Reactor names its threads loomBoundedElastic- when they are virtual.
@@ -222,10 +240,13 @@ class AnthropicModelTests {
 	}
 
 	private String post(String conversationId, String text) throws Exception {
+		return post(Map.of("conversationId", conversationId, "text", text));
+	}
+
+	private String post(Map<String, ?> message) throws Exception {
 		HttpRequest request = HttpRequest.newBuilder(URI.create("http://localhost:" + this.port + "/chat/stream"))
 			.header("Content-Type", "application/json")
-			.POST(HttpRequest.BodyPublishers
-				.ofString(json.writeValueAsString(Map.of("conversationId", conversationId, "text", text))))
+			.POST(HttpRequest.BodyPublishers.ofString(json.writeValueAsString(message)))
 			.build();
 		// With a limit, so that a reply that never ends fails its test and does not hold the build.
 		HttpResponse<String> response = this.http.sendAsync(request, HttpResponse.BodyHandlers.ofString())
