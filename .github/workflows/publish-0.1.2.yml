@@ -27,7 +27,11 @@ jobs:
                      "spring-chat-spring-boot-starter", "spring-chat-kotlin")
           expected = {f"pkg:maven/io.github.hjosugi/{module}@0.1.2" for module in modules}
           credentials = os.environ["CENTRAL_TOKEN_USERNAME"] + ":" + os.environ["CENTRAL_TOKEN_PASSWORD"]
-          headers = {"Authorization": "Bearer " + base64.b64encode(credentials.encode()).decode()}
+          headers = {
+              "User-Agent": "spring-chat-release/0.1.2 (+https://github.com/hjosugi/spring-chat)",
+              "Accept": "application/json",
+              "Authorization": "Bearer " + base64.b64encode(credentials.encode()).decode(),
+          }
 
           def post(path):
               conn = http.client.HTTPSConnection("central.sonatype.com", timeout=30)
